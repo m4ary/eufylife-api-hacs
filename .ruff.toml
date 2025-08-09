@@ -1,0 +1,16 @@
+[lint]
+select = [
+    "E",  # pycodestyle
+    "W",  # pycodestyle
+    "F",  # Pyflakes
+    "UP", # pyupgrade
+    "C4", # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+
+ignore = [
+    "E501", # line too long, handled by black
+]
+
+[lint.mccabe]
+max-complexity = 12 

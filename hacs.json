@@ -1,0 +1,7 @@
+{
+  "name": "EufyLife API",
+  "content_in_root": false,
+  "country": ["US", "GB", "CA", "AU", "DE", "FR", "NL", "SE", "DK", "NO"],
+  "homeassistant": "2024.1.0",
+  "hacs": "1.32.0"
+} 

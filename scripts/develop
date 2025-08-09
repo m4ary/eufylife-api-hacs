@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+# Create config dir if not exists
+if [ ! -d "./config" ]; then
+    mkdir -p ./config
+    hass --config ./config --script ensure_config
+fi
+
+# Set the path to custom_components
+cd ./config
+if [ ! -d "custom_components" ]; then
+    ln -sf ../custom_components custom_components
+fi
+
+cd ..
+
+# Start Home Assistant
+hass --config ./config --debug 

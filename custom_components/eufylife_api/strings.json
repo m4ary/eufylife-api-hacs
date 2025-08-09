@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "EufyLife API",
+        "description": "Enter your EufyLife account credentials to connect your smart scale data.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to EufyLife API",
+      "invalid_auth": "Invalid email or password",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "Account is already configured"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "weight": {
+        "name": "Weight"
+      },
+      "target_weight": {
+        "name": "Target Weight"
+      },
+      "body_fat": {
+        "name": "Body Fat"
+      },
+      "muscle_mass": {
+        "name": "Muscle Mass"
+      },
+      "bmi": {
+        "name": "BMI"
+      }
+    }
+  }
+} 
