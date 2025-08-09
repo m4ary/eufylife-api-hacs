@@ -1,20 +1,21 @@
-# EufyLife API Integration for Home Assistant
+<p align="center">
+  <img src=".github/logo.png" alt="Logo" width="150">
+</p>
 
+<h1 align="center">EufyLife API Integration for Home Assistant</h1>
 
+[![GitHub Release][releases-shield]][releases]
 [![License][license-shield]](LICENSE)
 [![hacs][hacsbadge]][hacs]
 [![Project Maintenance][maintenance-shield]][user_profile]
-
-
-_Integration to connect EufyLife smart scale data to Home Assistant via the EufyLife cloud API._
+[![BuyMeCoffee][buymecoffeebadge]][buymecoffee]
+[![Community Forum][forum-shield]][forum]
 
 **This integration will set up the following platforms:**
 
 | Platform | Description |
 | -------- | ----------- |
 | `sensor` | Show current weight, target weight, body fat, muscle mass, and BMI for each family member |
-
-![example][exampleimg]
 
 ## Features
 
@@ -59,6 +60,10 @@ Configuration is done through the Home Assistant UI:
 4. The integration will automatically discover your devices and family members
 5. Sensors will be created for each family member
 
+## Supported Devices
+
+- EufyLife smart scales connected to the EufyLife mobile app
+
 ## Sensors
 
 For each family member, the integration creates the following sensors:
@@ -69,23 +74,10 @@ For each family member, the integration creates the following sensors:
 - **Muscle Mass** (`sensor.{name}_muscle_mass`) - Muscle mass in kg
 - **BMI** (`sensor.{name}_bmi`) - Body Mass Index
 
-Each sensor includes:
-- Device class for proper Home Assistant categorization
-- State class for historical data tracking
-- Last update timestamp
-- Customer ID for identification
-
-## Device Information
-
-Each family member appears as a separate device in Home Assistant:
-- **Device Name**: "EufyLife Customer [ID]"
-- **Manufacturer**: EufyLife
-- **Model**: Smart Scale
-- **Software Version**: Integration version
-
 ## API Details
 
 This integration uses the official EufyLife API endpoints:
+
 - **Authentication**: `POST /v1/user/v2/email/login`
 - **Weight Data**: `GET /v1/customer/all_target`
 - **Detailed Data**: `GET /v1/customer/target/{customer_id}`
@@ -104,24 +96,24 @@ This integration uses the official EufyLife API endpoints:
 
 ## Contributions are welcome!
 
-If you want to contribute to this please read the [Contribution guidelines](CONTRIBUTING.md)
+If you want to contribute to this please read the [Contribution guidelines](.github/CONTRIBUTING.md)
+
+## Credits
+
+Code template was mainly taken from [@Ludeeus](https://github.com/ludeeus)'s [integration_blueprint][integration_blueprint] template
 
 ---
 
 [integration_blueprint]: https://github.com/ludeeus/integration_blueprint
-[buymecoffee]: https://www.buymeacoffee.com/mshary
+[buymecoffee]: https://buymeacoffee.com/mshary
 [buymecoffeebadge]: https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge
-[commits-shield]: https://img.shields.io/github/commit-activity/y/mshary/eufylife-api-hacs.svg?style=for-the-badge
-[commits]: https://github.com/mshary/eufylife-api-hacs/commits/main
 [hacs]: https://github.com/hacs/integration
 [hacsbadge]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge
-[discord]: https://discord.gg/Qa5fW2R
-[discord-shield]: https://img.shields.io/discord/330944238910963714.svg?style=for-the-badge
-[exampleimg]: example.png
+[exampleimg]: .github/logo.png
 [forum-shield]: https://img.shields.io/badge/community-forum-brightgreen.svg?style=for-the-badge
 [forum]: https://community.home-assistant.io/
-[license-shield]: https://img.shields.io/github/license/mshary/eufylife-api-hacs.svg?style=for-the-badge
+[license-shield]: https://img.shields.io/github/license/m4ary/eufylife-api-hacs.svg?style=for-the-badge
 [maintenance-shield]: https://img.shields.io/badge/maintainer-%40mshary-blue.svg?style=for-the-badge
-[releases-shield]: https://img.shields.io/github/release/mshary/eufylife-api-hacs.svg?style=for-the-badge
-[releases]: https://github.com/mshary/eufylife-api-hacs/releases
-[user_profile]: https://github.com/mshary 
+[releases-shield]: https://img.shields.io/github/release/m4ary/eufylife-api-hacs.svg?style=for-the-badge
+[releases]: https://github.com/m4ary/eufylife-api-hacs/releases
+[user_profile]: https://github.com/m4ary 
