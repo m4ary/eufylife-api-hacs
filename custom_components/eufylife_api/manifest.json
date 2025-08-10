@@ -3,9 +3,9 @@
   "name": "EufyLife API",
   "codeowners": ["@mshary"],
   "config_flow": true,
-  "documentation": "https://github.com/mshary/eufylife-api-integration",
+  "documentation": "https://github.com/mshary/eufylife-api-hacs",
   "integration_type": "device",
   "iot_class": "cloud_polling",
   "requirements": ["requests>=2.25.0"],
-  "version": "1.0.0"
+  "version": "1.1.0"
 } 

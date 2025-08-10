@@ -5,14 +5,29 @@ DOMAIN = "eufylife_api"
 # Configuration keys
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
+CONF_UPDATE_INTERVAL = "update_interval"
 
 # API constants
 API_BASE_URL = "https://api.eufylife.com"
 CLIENT_ID = "eufy-app"
 CLIENT_SECRET = "8FHf22gaTKu7MZXqz5zytw"
 
-# Update interval
-UPDATE_INTERVAL = 300  # 5 minutes
+# Default update interval in seconds (5 minutes)
+DEFAULT_UPDATE_INTERVAL = 300
+
+# Update interval options (in seconds)
+UPDATE_INTERVAL_OPTIONS = {
+    "1_minute": 60,
+    "2_minutes": 120,
+    "5_minutes": 300,
+    "10_minutes": 600,
+    "15_minutes": 900,
+    "30_minutes": 1800,
+    "1_hour": 3600,
+    "2_hours": 7200,
+    "6_hours": 21600,
+    "12_hours": 43200,
+}
 
 # Sensor types
 SENSOR_TYPES = {

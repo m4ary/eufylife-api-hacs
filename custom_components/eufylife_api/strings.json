@@ -6,6 +6,18 @@
         "description": "Enter your EufyLife account credentials to connect your smart scale data.",
         "data": {
           "email": "Email",
+          "password": "Password",
+          "update_interval": "Update Interval"
+        },
+        "data_description": {
+          "update_interval": "How often to check for new weight data"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate EufyLife API",
+        "description": "Your credentials need to be updated. Please re-enter your login information.",
+        "data": {
+          "email": "Email",
           "password": "Password"
         }
       }
@@ -16,7 +28,38 @@
       "unknown": "Unexpected error occurred"
     },
     "abort": {
-      "already_configured": "Account is already configured"
+      "already_configured": "Account is already configured",
+      "reauth_successful": "Re-authentication successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "EufyLife API Options",
+        "description": "Configure your EufyLife API integration options.",
+        "data": {
+          "update_interval": "Update Interval"
+        },
+        "data_description": {
+          "update_interval": "How often to check for new weight data"
+        }
+      }
+    }
+  },
+  "selector": {
+    "update_interval": {
+      "options": {
+        "1_minute": "1 minute",
+        "2_minutes": "2 minutes",
+        "5_minutes": "5 minutes (recommended)",
+        "10_minutes": "10 minutes",
+        "15_minutes": "15 minutes",
+        "30_minutes": "30 minutes",
+        "1_hour": "1 hour",
+        "2_hours": "2 hours",
+        "6_hours": "6 hours",
+        "12_hours": "12 hours"
+      }
     }
   },
   "entity": {

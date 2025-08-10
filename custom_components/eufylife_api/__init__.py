@@ -10,7 +10,7 @@ from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN
+from .const import CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN
 from .models import EufyLifeData
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,12 +39,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         expires_at=entry.data.get("expires_at", 0),
     )
 
+    # Log the configured update interval
+    update_interval = entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+    _LOGGER.info("EufyLife integration setup with %d second update interval", update_interval)
+
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Set up config entry update listener for dynamic interval changes
+    entry.async_on_unload(entry.add_update_listener(async_update_listener))
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS) 
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle options update."""
+    _LOGGER.info("EufyLife integration options updated, reloading...")
+    await hass.config_entries.async_reload(entry.entry_id) 

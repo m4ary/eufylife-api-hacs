@@ -26,7 +26,7 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from .const import API_BASE_URL, DOMAIN, SENSOR_TYPES, UPDATE_INTERVAL
+from .const import API_BASE_URL, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN, SENSOR_TYPES
 from .models import EufyLifeConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,11 +40,19 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self.session = async_get_clientsession(hass)
         
+        # Get update interval from config, fallback to default
+        update_interval_seconds = entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        
         super().__init__(
             hass,
             _LOGGER,
-            name=DOMAIN,
-            update_interval=timedelta(seconds=UPDATE_INTERVAL),
+            name=f"{DOMAIN}_{entry.entry_id}",
+            update_interval=timedelta(seconds=update_interval_seconds),
+        )
+        
+        _LOGGER.info(
+            "EufyLife data coordinator initialized with %d second update interval",
+            update_interval_seconds
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -150,6 +158,19 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Error fetching customer details for %s: %s", customer_id, err)
             
         return {}
+
+    def update_interval_from_config(self) -> None:
+        """Update the coordinator's update interval from config entry."""
+        new_interval_seconds = self.entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        new_interval = timedelta(seconds=new_interval_seconds)
+        
+        if new_interval != self.update_interval:
+            _LOGGER.info(
+                "Updating coordinator interval from %s to %s seconds",
+                self.update_interval.total_seconds(),
+                new_interval_seconds
+            )
+            self.update_interval = new_interval
 
 
 async def async_setup_entry(
@@ -263,5 +284,9 @@ class EufyLifeSensorEntity(CoordinatorEntity, SensorEntity):
             
         # Add customer ID for identification
         attrs["customer_id"] = self.customer_id[:8]
+        
+        # Add update interval info
+        interval_seconds = self.entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        attrs["update_interval"] = f"{interval_seconds} seconds"
         
         return attrs 
