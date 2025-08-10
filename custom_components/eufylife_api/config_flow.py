@@ -10,7 +10,7 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -235,6 +235,10 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
 class EufyLifeAPIOptionsFlow(OptionsFlow):
     """Handle options flow for EufyLife API."""
 
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -254,7 +258,7 @@ class EufyLifeAPIOptionsFlow(OptionsFlow):
         current_interval = self.config_entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         current_key = next(
             (key for key, value in UPDATE_INTERVAL_OPTIONS.items() if value == current_interval),
-            "5_minutes"
+            "5 minutes"
         )
 
         return self.async_show_form(
