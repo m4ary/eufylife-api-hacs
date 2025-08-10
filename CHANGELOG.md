@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2025-01-09
+
+### Fixed
+- **Deprecation Warning**: Removed explicit config_entry assignment in OptionsFlow to fix deprecation warning in Home Assistant 2025.12+
+- **Future Compatibility**: Integration now follows current Home Assistant best practices for options flow
+
+### Technical Changes
+- Simplified EufyLifeAPIOptionsFlow class initialization
+- Removed deprecated explicit config_entry property assignment
+
 ## [1.1.0] - 2025-01-09
 
 ### Added
