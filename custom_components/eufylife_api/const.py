@@ -17,16 +17,16 @@ DEFAULT_UPDATE_INTERVAL = 300
 
 # Update interval options (in seconds)
 UPDATE_INTERVAL_OPTIONS = {
-    "1_minute": 60,
-    "2_minutes": 120,
-    "5_minutes": 300,
-    "10_minutes": 600,
-    "15_minutes": 900,
-    "30_minutes": 1800,
-    "1_hour": 3600,
-    "2_hours": 7200,
-    "6_hours": 21600,
-    "12_hours": 43200,
+    "1 minute": 60,
+    "2 minutes": 120,
+    "5 minutes": 300,
+    "10 minutes": 600,
+    "15 minutes": 900,
+    "30 minutes": 1800,
+    "1 hour": 3600,
+    "2 hours": 7200,
+    "6 hours": 21600,
+    "12 hours": 43200,
 }
 
 # Sensor types

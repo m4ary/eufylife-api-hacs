@@ -1,0 +1,12 @@
+refresh_data:
+  name: "Refresh EufyLife Data"
+  description: "Manually trigger a data refresh for debugging purposes"
+  fields:
+    entity_id:
+      name: "Entity ID"
+      description: "Target a specific EufyLife sensor (optional)"
+      required: false
+      selector:
+        entity:
+          domain: sensor
+          integration: eufylife_api 
