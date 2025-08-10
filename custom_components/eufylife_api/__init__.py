@@ -120,9 +120,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     _LOGGER.info("Unloading EufyLife API integration (entry_id: %s)", entry.entry_id)
+    
+    # Clear any cached data and reset state
+    if hasattr(entry, 'runtime_data'):
+        _LOGGER.debug("Clearing runtime data cache")
+        entry.runtime_data = None
+    
     success = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if success:
-        _LOGGER.info("EufyLife API integration unloaded successfully")
+        _LOGGER.info("EufyLife API integration unloaded successfully - all cached data cleared")
     else:
         _LOGGER.error("Failed to unload EufyLife API integration")
     return success

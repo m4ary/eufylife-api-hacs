@@ -140,6 +140,10 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         
         _LOGGER.debug("Token is valid, proceeding with API calls")
 
+        # Get current timestamp for fresh data requests
+        current_timestamp = int(time.time())
+        current_date = datetime.now().strftime('%Y-%m-%d')
+        
         headers = {
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
@@ -156,11 +160,21 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Request headers (token redacted): %s", {k: v if k != "Token" else "***REDACTED***" for k, v in headers.items()})
 
         try:
+            # Prepare query parameters for fresh data
+            params = {
+                "timestamp": current_timestamp,
+                "date": current_date,
+                "_": current_timestamp,  # Cache busting parameter
+            }
+            
+            _LOGGER.debug("API request parameters: %s", params)
+            
             # Fetch current weight targets
             start_time = time.time()
             async with self.session.get(
                 f"{API_BASE_URL}/v1/customer/all_target",
                 headers=headers,
+                params=params,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 request_duration = time.time() - start_time
@@ -233,6 +247,25 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
             raw_muscle_mass = target.get("current_muscle_mass", 0)
             update_time = target.get("update_time", 0)
             
+            # Check data freshness
+            if update_time:
+                data_age_hours = (current_timestamp - update_time) / 3600
+                data_timestamp = datetime.fromtimestamp(update_time)
+                _LOGGER.info(
+                    "Customer %s data: weight=%s, target=%s, body_fat=%s, muscle=%s | "
+                    "Last updated: %s (%.1f hours ago)",
+                    customer_id[:8], raw_weight, raw_target_weight, raw_body_fat, raw_muscle_mass,
+                    data_timestamp.strftime('%Y-%m-%d %H:%M:%S'), data_age_hours
+                )
+                
+                if data_age_hours > 24:
+                    _LOGGER.warning(
+                        "Customer %s data is %.1f hours old - may be stale data from EufyLife servers",
+                        customer_id[:8], data_age_hours
+                    )
+            else:
+                _LOGGER.warning("Customer %s has no update_time - data freshness unknown", customer_id[:8])
+            
             _LOGGER.debug(
                 "Raw data for customer %s: weight=%s, target_weight=%s, body_fat=%s, muscle_mass=%s, update_time=%s",
                 customer_id[:8], raw_weight, raw_target_weight, raw_body_fat, raw_muscle_mass, update_time
@@ -272,10 +305,18 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Fetching detailed data for customer %s", customer_id[:8])
         
         try:
+            # Add fresh data parameters for customer details
+            current_timestamp = int(time.time())
+            params = {
+                "timestamp": current_timestamp,
+                "_": current_timestamp,  # Cache busting
+            }
+            
             start_time = time.time()
             async with self.session.get(
                 f"{API_BASE_URL}/v1/customer/target/{customer_id}",
                 headers=headers,
+                params=params,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 request_duration = time.time() - start_time
@@ -331,7 +372,14 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
             
     async def async_request_refresh(self) -> None:
         """Request a manual refresh of data."""
-        _LOGGER.info("Manual data refresh requested")
+        _LOGGER.info("Manual data refresh requested - clearing any cached data")
+        
+        # Reset tracking variables to force fresh data
+        self._last_update_time = None
+        self._update_count = 0
+        self._last_successful_update = None
+        self._consecutive_failures = 0
+        
         await super().async_request_refresh()
 
 
