@@ -26,7 +26,7 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from .const import API_BASE_URL, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN, SENSOR_TYPES
+from .const import API_BASE_URL, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN, SENSOR_TYPES, USER_AGENT_VERSION
 from .models import EufyLifeConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
@@ -117,6 +117,15 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch data from EufyLife API."""
         data = self.entry.runtime_data
         
+        # Try device data endpoint first (more recent data)
+        device_data = await self._fetch_device_data()
+        if device_data:
+            _LOGGER.debug("Using device data endpoint for fresh measurements")
+            # For now, we'll still use the target endpoint as primary
+            # but log that device data is available
+        
+        # Continue with existing target endpoint logic
+        
         # Log token status
         current_time = time.time()
         token_expires_at = data.expires_at
@@ -143,7 +152,7 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         headers = {
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": "EufyLife-iOS-3.3.7",
+            "User-Agent": f"EufyLife-iOS-{USER_AGENT_VERSION}",
             "Category": "Health",
             "Language": "en",
             "Timezone": "UTC",
@@ -206,6 +215,54 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
             return {}
         except Exception as err:
             _LOGGER.error("Unexpected error fetching data from EufyLife API: %s", err, exc_info=True)
+            return {}
+
+    async def _fetch_device_data(self) -> dict[str, Any]:
+        """Fetch recent device data from EufyLife API."""
+        data = self.entry.runtime_data
+        
+        # Calculate timestamp for last 24 hours
+        import time as time_module
+        since_timestamp = int(time_module.time()) - 86400  # 24 hours ago
+        
+        headers = {
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": f"EufyLife-iOS-{USER_AGENT_VERSION}",
+            "Token": data.access_token,
+            "Uid": data.user_id,
+        }
+        
+        try:
+            async with self.session.get(
+                f"{API_BASE_URL}/v1/device/data?after={since_timestamp}",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                request_duration = time.time() - time.time()
+                
+                _LOGGER.debug(
+                    "Device data request completed in %.2f seconds. Status: %d",
+                    request_duration, response.status
+                )
+                
+                if response.status == 200:
+                    device_data = await response.json()
+                    _LOGGER.debug("Device data response: %s", device_data)
+                    
+                    # Process device data if available
+                    if device_data and isinstance(device_data, list) and len(device_data) > 0:
+                        _LOGGER.info("Retrieved %d device data records", len(device_data))
+                        return device_data
+                    else:
+                        _LOGGER.debug("No recent device data found")
+                        return {}
+                else:
+                    _LOGGER.debug("Device data request failed with status %d", response.status)
+                    return {}
+                    
+        except Exception as err:
+            _LOGGER.debug("Error fetching device data: %s", err)
             return {}
 
     async def _process_target_data(self, target_data: dict, headers: dict) -> dict[str, Any]:

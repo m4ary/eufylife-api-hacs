@@ -12,6 +12,9 @@ API_BASE_URL = "https://api.eufylife.com"
 CLIENT_ID = "eufy-app"
 CLIENT_SECRET = "8FHf22gaTKu7MZXqz5zytw"
 
+# User-Agent version - update if EufyLife releases newer app versions
+USER_AGENT_VERSION = "3.3.7"
+
 # Default update interval in seconds (5 minutes)
 DEFAULT_UPDATE_INTERVAL = 300
 
