@@ -43,6 +43,7 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         self._update_count = 0
         self._last_successful_update = None
         self._consecutive_failures = 0
+        self._last_device_timestamp = None  # Track last measurement timestamp
         
         # Get update interval from config, fallback to default
         update_interval_seconds = entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
@@ -145,6 +146,15 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         if device_data:
             _LOGGER.info("Device data endpoint returned %d records, processing...", len(device_data))
             processed_device_data = await self._process_device_data(device_data)
+            
+            # Log what data we received
+            if processed_device_data:
+                for customer_id, customer_data in processed_device_data.items():
+                    last_update = customer_data.get("last_update")
+                    if last_update:
+                        _LOGGER.info("Customer %s: latest measurement at %s", 
+                                   customer_id[:8], last_update.strftime('%Y-%m-%d %H:%M:%S'))
+            
             return processed_device_data
         else:
             _LOGGER.warning("No device data available from API")
@@ -154,17 +164,27 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch recent device data from EufyLife API."""
         data = self.entry.runtime_data
         
-        # Calculate timestamp for lookback period (configurable, default 30 days)
         import time as time_module
-        lookback_days = self.entry.data.get(CONF_DATA_LOOKBACK_DAYS, DEFAULT_DATA_LOOKBACK_DAYS)
-        since_timestamp = int(time_module.time()) - (lookback_days * 24 * 3600)
         
-        _LOGGER.info(
-            "Fetching device data since timestamp %d (%d days lookback, %s)",
-            since_timestamp,
-            lookback_days,
-            datetime.fromtimestamp(since_timestamp).strftime('%Y-%m-%d %H:%M:%S')
-        )
+        # Use last device timestamp if available, otherwise use lookback period
+        if self._last_device_timestamp:
+            # Get data since last measurement (add 1 second to avoid duplicates)
+            since_timestamp = int(self._last_device_timestamp) + 1
+            _LOGGER.info(
+                "Fetching device data since last measurement: timestamp %d (%s)",
+                since_timestamp,
+                datetime.fromtimestamp(since_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            )
+        else:
+            # First run - use configurable lookback period
+            lookback_days = self.entry.data.get(CONF_DATA_LOOKBACK_DAYS, DEFAULT_DATA_LOOKBACK_DAYS)
+            since_timestamp = int(time_module.time()) - (lookback_days * 24 * 3600)
+            _LOGGER.info(
+                "First run - fetching device data since timestamp %d (%d days lookback, %s)",
+                since_timestamp,
+                lookback_days,
+                datetime.fromtimestamp(since_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            )
         
         headers = {
             "Host": "api.eufylife.com",
@@ -234,12 +254,20 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                         
                         return actual_data
                     else:
-                        _LOGGER.warning(
-                            "No device data found in last %d days (since %s). "
-                            "Try taking a measurement on your scale to generate new data.",
-                            lookback_days,
-                            datetime.fromtimestamp(since_timestamp).strftime('%Y-%m-%d %H:%M:%S')
-                        )
+                        if self._last_device_timestamp:
+                            _LOGGER.warning(
+                                "No new device data found since last measurement (%s). "
+                                "Take a new measurement on your scale to generate fresh data.",
+                                datetime.fromtimestamp(since_timestamp - 1).strftime('%Y-%m-%d %H:%M:%S')
+                            )
+                        else:
+                            lookback_days = self.entry.data.get(CONF_DATA_LOOKBACK_DAYS, DEFAULT_DATA_LOOKBACK_DAYS)
+                            _LOGGER.warning(
+                                "No device data found in last %d days (since %s). "
+                                "Try taking a measurement on your scale to generate new data.",
+                                lookback_days,
+                                datetime.fromtimestamp(since_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                            )
                         return {}
                 else:
                     _LOGGER.debug("Device data request failed with status %d", response.status)
@@ -252,8 +280,13 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
     async def _process_device_data(self, device_data: list) -> dict[str, Any]:
         """Process device data into customer format."""
         processed_data = {}
+        latest_timestamp = self._last_device_timestamp
+        total_measurements = len(device_data)
         
-        _LOGGER.debug("Processing %d device data records", len(device_data))
+        _LOGGER.info("Processing %d device data records (measurements)", total_measurements)
+        if self._last_device_timestamp:
+            _LOGGER.debug("Current last device timestamp: %s", 
+                         datetime.fromtimestamp(self._last_device_timestamp).strftime('%Y-%m-%d %H:%M:%S'))
         
         for i, record in enumerate(device_data):
             try:
@@ -276,6 +309,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                 if update_time:
                     try:
                         timestamp = datetime.fromtimestamp(update_time)
+                        # Track the latest timestamp for next API call
+                        if latest_timestamp is None or update_time > latest_timestamp:
+                            latest_timestamp = update_time
                     except Exception as ts_err:
                         _LOGGER.debug("Could not parse timestamp %s: %s", update_time, ts_err)
                 
@@ -352,15 +388,27 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 # Only process if we have some meaningful measurement data
                 if any(key in customer_data for key in ["weight", "body_fat", "muscle_mass", "bmi"]):
-                    processed_data[customer_id] = customer_data
+                    # If we already have data for this customer, keep the most recent one
+                    if customer_id in processed_data:
+                        existing_timestamp = processed_data[customer_id].get("last_update")
+                        if timestamp and existing_timestamp and timestamp > existing_timestamp:
+                            processed_data[customer_id] = customer_data
+                            _LOGGER.debug("Updated customer %s with newer measurement (timestamp: %s)", 
+                                         customer_id[:8], timestamp.strftime('%Y-%m-%d %H:%M:%S'))
+                        else:
+                            _LOGGER.debug("Keeping existing measurement for customer %s (older or same timestamp)", 
+                                         customer_id[:8])
+                    else:
+                        processed_data[customer_id] = customer_data
                     
                     _LOGGER.debug(
-                        "Processed device record #%d for customer %s: weight=%s kg, body_fat=%s%%, muscle_mass=%s kg, bmi=%s",
+                        "Processed device record #%d for customer %s: weight=%s kg, body_fat=%s%%, muscle_mass=%s kg, bmi=%s, timestamp=%s",
                         i, customer_id[:8], 
                         customer_data.get("weight"), 
                         customer_data.get("body_fat"),
                         customer_data.get("muscle_mass"),
-                        customer_data.get("bmi")
+                        customer_data.get("bmi"),
+                        timestamp.strftime('%Y-%m-%d %H:%M:%S') if timestamp else "None"
                     )
                 else:
                     _LOGGER.debug("Device record #%d for customer %s contains no usable measurement data", 
@@ -370,7 +418,18 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning("Error processing device record #%d: %s", i, err)
                 continue
         
-        _LOGGER.info("Successfully processed device data for %d customers", len(processed_data))
+        # Update the last device timestamp for next API call
+        if latest_timestamp is not None:
+            self._last_device_timestamp = latest_timestamp
+            _LOGGER.info("Updated last device timestamp to %s for next API call", 
+                        datetime.fromtimestamp(latest_timestamp).strftime('%Y-%m-%d %H:%M:%S'))
+        
+        _LOGGER.info("Successfully processed %d measurements into data for %d customers", 
+                    total_measurements, len(processed_data))
+        
+        if total_measurements > len(processed_data):
+            _LOGGER.debug("Some measurements were for the same customers - kept most recent per customer")
+        
         return processed_data
 
 
@@ -393,6 +452,11 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         """Request a manual refresh of data."""
         _LOGGER.info("Manual data refresh requested")
         await super().async_request_refresh()
+    
+    def reset_device_timestamp(self) -> None:
+        """Reset the device timestamp to force full data reload on next update."""
+        self._last_device_timestamp = None
+        _LOGGER.info("Device timestamp reset - next update will use full lookback period")
 
 
 async def async_setup_entry(
