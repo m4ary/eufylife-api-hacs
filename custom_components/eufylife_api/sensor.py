@@ -119,12 +119,12 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Try device data endpoint first (more recent data)
         device_data = await self._fetch_device_data()
+        processed_device_data = {}
         if device_data:
-            _LOGGER.debug("Using device data endpoint for fresh measurements")
-            # For now, we'll still use the target endpoint as primary
-            # but log that device data is available
+            _LOGGER.info("Device data endpoint returned %d records, processing...", len(device_data))
+            processed_device_data = await self._process_device_data(device_data)
         
-        # Continue with existing target endpoint logic
+        # Continue with existing target endpoint logic for fallback
         
         # Log token status
         current_time = time.time()
@@ -187,14 +187,32 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                     
                     if target_data.get("res_code") == 1:
                         _LOGGER.info("API response successful, processing target data...")
-                        return await self._process_target_data(target_data, headers)
+                        target_processed_data = await self._process_target_data(target_data, headers)
+                        
+                        # Merge device data with target data, prioritizing device data
+                        final_data = target_processed_data.copy()
+                        for customer_id, device_info in processed_device_data.items():
+                            if customer_id in final_data:
+                                # Update existing customer data with device data
+                                final_data[customer_id].update(device_info)
+                                _LOGGER.debug("Updated customer %s with device data", customer_id[:8])
+                            else:
+                                # Add new customer from device data
+                                final_data[customer_id] = device_info
+                                _LOGGER.debug("Added new customer %s from device data", customer_id[:8])
+                        
+                        if processed_device_data:
+                            _LOGGER.info("Merged device data for %d customers with target data", len(processed_device_data))
+                        
+                        return final_data
                     else:
                         _LOGGER.error(
                             "API returned error response. res_code: %s, message: %s",
                             target_data.get("res_code"),
                             target_data.get("res_msg", "Unknown error")
                         )
-                        return {}
+                        # Return device data only if target data failed
+                        return processed_device_data
                 else:
                     response_text = await response.text()
                     _LOGGER.error(
@@ -202,20 +220,24 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                         response.status,
                         response_text[:500]  # Limit response text length
                     )
-                    return {}
+                    # Return device data if available, empty dict otherwise
+                    return processed_device_data
 
         except asyncio.TimeoutError:
             _LOGGER.error(
                 "Timeout fetching data from EufyLife API after 30 seconds. "
                 "Check internet connection and API availability."
             )
-            return {}
+            # Return device data if available, empty dict otherwise  
+            return processed_device_data
         except aiohttp.ClientError as err:
             _LOGGER.error("HTTP client error fetching data from EufyLife API: %s", err)
-            return {}
+            # Return device data if available, empty dict otherwise
+            return processed_device_data
         except Exception as err:
             _LOGGER.error("Unexpected error fetching data from EufyLife API: %s", err, exc_info=True)
-            return {}
+            # Return device data if available, empty dict otherwise
+            return processed_device_data
 
     async def _fetch_device_data(self) -> dict[str, Any]:
         """Fetch recent device data from EufyLife API."""
@@ -234,12 +256,13 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         }
         
         try:
+            start_time = time.time()
             async with self.session.get(
                 f"{API_BASE_URL}/v1/device/data?after={since_timestamp}",
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
-                request_duration = time.time() - time.time()
+                request_duration = time.time() - start_time
                 
                 _LOGGER.debug(
                     "Device data request completed in %.2f seconds. Status: %d",
@@ -264,6 +287,115 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.debug("Error fetching device data: %s", err)
             return {}
+
+    async def _process_device_data(self, device_data: list) -> dict[str, Any]:
+        """Process device data into customer format."""
+        processed_data = {}
+        
+        _LOGGER.debug("Processing %d device data records", len(device_data))
+        
+        for i, record in enumerate(device_data):
+            try:
+                # Extract customer ID - might be in different fields
+                customer_id = record.get("customer_id") or record.get("customerId") or record.get("uid")
+                if not customer_id:
+                    _LOGGER.debug("Device record #%d missing customer_id, skipping", i)
+                    continue
+                
+                # Extract measurement data
+                # Device data might have current measurements in different format
+                weight = None
+                body_fat = None
+                muscle_mass = None
+                timestamp = None
+                
+                # Try different possible field names for weight (in grams, need to convert to kg)
+                weight_raw = (record.get("weight") or 
+                             record.get("current_weight") or 
+                             record.get("bodyWeight") or 
+                             record.get("body_weight"))
+                
+                if weight_raw:
+                    # Device data weight might be in grams or already in kg with decimal
+                    if isinstance(weight_raw, (int, float)):
+                        if weight_raw > 1000:  # Assume grams if > 1000
+                            weight = weight_raw / 1000.0
+                        else:
+                            weight = float(weight_raw)
+                
+                # Try different field names for body fat percentage
+                body_fat = (record.get("body_fat") or 
+                           record.get("bodyfat") or 
+                           record.get("bodyFat") or 
+                           record.get("current_bodyfat"))
+                
+                # Try different field names for muscle mass
+                muscle_mass_raw = (record.get("muscle_mass") or 
+                                  record.get("muscle") or 
+                                  record.get("muscleMass") or 
+                                  record.get("current_muscle_mass"))
+                
+                if muscle_mass_raw and isinstance(muscle_mass_raw, (int, float)):
+                    muscle_mass = float(muscle_mass_raw)
+                
+                # Try different field names for timestamp
+                timestamp_raw = (record.get("timestamp") or 
+                                record.get("time") or 
+                                record.get("created_at") or 
+                                record.get("measureTime") or 
+                                record.get("update_time"))
+                
+                if timestamp_raw:
+                    try:
+                        if isinstance(timestamp_raw, str):
+                            # Try to parse ISO format timestamp
+                            from datetime import datetime
+                            timestamp = datetime.fromisoformat(timestamp_raw.replace('Z', '+00:00'))
+                        elif isinstance(timestamp_raw, (int, float)):
+                            timestamp = datetime.fromtimestamp(timestamp_raw)
+                    except Exception as ts_err:
+                        _LOGGER.debug("Could not parse timestamp %s: %s", timestamp_raw, ts_err)
+                
+                # Only process if we have some meaningful data
+                if weight or body_fat or muscle_mass:
+                    customer_data = {}
+                    
+                    if weight:
+                        customer_data["weight"] = round(weight, 1)
+                        customer_data["device_weight"] = True  # Mark as from device data
+                    
+                    if body_fat:
+                        customer_data["body_fat"] = round(float(body_fat), 1)
+                        customer_data["device_body_fat"] = True
+                    
+                    if muscle_mass:
+                        customer_data["muscle_mass"] = round(muscle_mass, 1)
+                        customer_data["device_muscle_mass"] = True
+                    
+                    if timestamp:
+                        customer_data["last_update"] = timestamp
+                        customer_data["device_timestamp"] = True
+                    
+                    # Merge with existing data for this customer or create new
+                    if customer_id in processed_data:
+                        processed_data[customer_id].update(customer_data)
+                    else:
+                        processed_data[customer_id] = customer_data
+                    
+                    _LOGGER.debug(
+                        "Processed device record #%d for customer %s: weight=%s, body_fat=%s, muscle_mass=%s",
+                        i, customer_id[:8] if customer_id else "unknown", weight, body_fat, muscle_mass
+                    )
+                else:
+                    _LOGGER.debug("Device record #%d for customer %s contains no usable measurement data", 
+                                 i, customer_id[:8] if customer_id else "unknown")
+                    
+            except Exception as err:
+                _LOGGER.warning("Error processing device record #%d: %s", i, err)
+                continue
+        
+        _LOGGER.info("Successfully processed device data for %d customers", len(processed_data))
+        return processed_data
 
     async def _process_target_data(self, target_data: dict, headers: dict) -> dict[str, Any]:
         """Process target data and fetch additional customer details."""
@@ -537,6 +669,22 @@ class EufyLifeSensorEntity(CoordinatorEntity, SensorEntity):
             attrs["consecutive_failures"] = self.coordinator._consecutive_failures
             if self.coordinator._last_successful_update:
                 attrs["last_successful_update"] = self.coordinator._last_successful_update.isoformat()
+        
+        # Add data source information
+        data_sources = []
+        if customer_data.get("device_weight") or customer_data.get("device_body_fat") or customer_data.get("device_muscle_mass"):
+            data_sources.append("device_data")
+        if any(key not in ["device_weight", "device_body_fat", "device_muscle_mass", "device_timestamp"] 
+               for key in customer_data.keys() if key.startswith(("weight", "body_fat", "muscle_mass", "target_"))):
+            data_sources.append("target_data")
+        
+        if data_sources:
+            attrs["data_source"] = ", ".join(data_sources)
+            
+        # Add specific device data indicators for this sensor type
+        device_data_key = f"device_{self.sensor_type}"
+        if customer_data.get(device_data_key):
+            attrs["from_device_data"] = True
         
         _LOGGER.debug("Attributes for %s sensor (customer %s): %s", 
                      self.sensor_type, self.customer_id[:8], attrs)
