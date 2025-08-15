@@ -157,8 +157,13 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
             
             return processed_device_data
         else:
-            _LOGGER.warning("No device data available from API")
-            return {}
+            # No new data available - preserve existing data to avoid "unknown" sensor state
+            if self.data:
+                _LOGGER.info("No new device data available - preserving existing sensor data")
+                return self.data
+            else:
+                _LOGGER.warning("No device data available from API and no existing data to preserve")
+                return {}
 
     async def _fetch_device_data(self) -> dict[str, Any]:
         """Fetch recent device data from EufyLife API."""
@@ -166,25 +171,21 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         
         import time as time_module
         
-        # Use last device timestamp if available, otherwise use lookback period
+        # Use last device timestamp if available, otherwise get ALL historical data
         if self._last_device_timestamp:
             # Get data since last measurement (add 1 second to avoid duplicates)
             since_timestamp = int(self._last_device_timestamp) + 1
+            use_after_param = True
             _LOGGER.info(
                 "Fetching device data since last measurement: timestamp %d (%s)",
                 since_timestamp,
                 datetime.fromtimestamp(since_timestamp).strftime('%Y-%m-%d %H:%M:%S')
             )
         else:
-            # First run - use configurable lookback period
-            lookback_days = self.entry.data.get(CONF_DATA_LOOKBACK_DAYS, DEFAULT_DATA_LOOKBACK_DAYS)
-            since_timestamp = int(time_module.time()) - (lookback_days * 24 * 3600)
-            _LOGGER.info(
-                "First run - fetching device data since timestamp %d (%d days lookback, %s)",
-                since_timestamp,
-                lookback_days,
-                datetime.fromtimestamp(since_timestamp).strftime('%Y-%m-%d %H:%M:%S')
-            )
+            # First run - get ALL historical data (no 'after' parameter)
+            since_timestamp = None
+            use_after_param = False
+            _LOGGER.info("First run - fetching ALL historical device data (no timestamp filter)")
         
         headers = {
             "Host": "api.eufylife.com",
@@ -198,8 +199,17 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         
         try:
             start_time = time.time()
+            
+            # Build endpoint URL conditionally
+            if use_after_param:
+                endpoint_url = f"{API_BASE_URL}/v1/device/data?after={since_timestamp}"
+            else:
+                endpoint_url = f"{API_BASE_URL}/v1/device/data"
+            
+            _LOGGER.debug("API endpoint: %s", endpoint_url)
+            
             async with self.session.get(
-                f"{API_BASE_URL}/v1/device/data?after={since_timestamp}",
+                endpoint_url,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
@@ -261,12 +271,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                                 datetime.fromtimestamp(since_timestamp - 1).strftime('%Y-%m-%d %H:%M:%S')
                             )
                         else:
-                            lookback_days = self.entry.data.get(CONF_DATA_LOOKBACK_DAYS, DEFAULT_DATA_LOOKBACK_DAYS)
                             _LOGGER.warning(
-                                "No device data found in last %d days (since %s). "
-                                "Try taking a measurement on your scale to generate new data.",
-                                lookback_days,
-                                datetime.fromtimestamp(since_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                                "No historical device data found for this user. "
+                                "Try taking a measurement on your scale to generate new data."
                             )
                         return {}
                 else:
@@ -282,11 +289,15 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         processed_data = {}
         latest_timestamp = self._last_device_timestamp
         total_measurements = len(device_data)
+        earliest_timestamp = None
+        is_first_run = self._last_device_timestamp is None
         
-        _LOGGER.info("Processing %d device data records (measurements)", total_measurements)
         if self._last_device_timestamp:
+            _LOGGER.info("Processing %d new device measurements", total_measurements)
             _LOGGER.debug("Current last device timestamp: %s", 
                          datetime.fromtimestamp(self._last_device_timestamp).strftime('%Y-%m-%d %H:%M:%S'))
+        else:
+            _LOGGER.info("Processing %d historical device measurements (first run - showing full history)", total_measurements)
         
         for i, record in enumerate(device_data):
             try:
@@ -312,6 +323,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                         # Track the latest timestamp for next API call
                         if latest_timestamp is None or update_time > latest_timestamp:
                             latest_timestamp = update_time
+                        # Track earliest timestamp for first run logging
+                        if earliest_timestamp is None or update_time < earliest_timestamp:
+                            earliest_timestamp = update_time
                     except Exception as ts_err:
                         _LOGGER.debug("Could not parse timestamp %s: %s", update_time, ts_err)
                 
@@ -423,6 +437,16 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
             self._last_device_timestamp = latest_timestamp
             _LOGGER.info("Updated last device timestamp to %s for next API call", 
                         datetime.fromtimestamp(latest_timestamp).strftime('%Y-%m-%d %H:%M:%S'))
+        
+        # Log date range for first run (historical data)
+        if earliest_timestamp is not None and is_first_run:
+            if earliest_timestamp != latest_timestamp:
+                _LOGGER.info("Historical data range: %s to %s",
+                           datetime.fromtimestamp(earliest_timestamp).strftime('%Y-%m-%d %H:%M:%S'),
+                           datetime.fromtimestamp(latest_timestamp).strftime('%Y-%m-%d %H:%M:%S'))
+            else:
+                _LOGGER.info("Single historical measurement at: %s",
+                           datetime.fromtimestamp(latest_timestamp).strftime('%Y-%m-%d %H:%M:%S'))
         
         _LOGGER.info("Successfully processed %d measurements into data for %d customers", 
                     total_measurements, len(processed_data))
