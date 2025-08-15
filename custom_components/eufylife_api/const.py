@@ -6,6 +6,7 @@ DOMAIN = "eufylife_api"
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_UPDATE_INTERVAL = "update_interval"
+CONF_DATA_LOOKBACK_DAYS = "data_lookback_days"
 
 # API constants
 API_BASE_URL = "https://api.eufylife.com"
@@ -17,6 +18,9 @@ USER_AGENT_VERSION = "3.3.7"
 
 # Default update interval in seconds (5 minutes)
 DEFAULT_UPDATE_INTERVAL = 300
+
+# Default data lookback period in days
+DEFAULT_DATA_LOOKBACK_DAYS = 30
 
 # Update interval options (in seconds)
 UPDATE_INTERVAL_OPTIONS = {
@@ -61,5 +65,36 @@ SENSOR_TYPES = {
         "name": "BMI",
         "unit": "kg/m²",
         "icon": "mdi:human",
+    },
+    "water_percentage": {
+        "name": "Water Percentage",
+        "unit": "%",
+        "icon": "mdi:water-percent",
+    },
+    "bone_mass": {
+        "name": "Bone Mass",
+        "device_class": "weight",
+        "unit": "kg",
+        "icon": "mdi:bone",
+    },
+    "bmr": {
+        "name": "BMR",
+        "unit": "kcal/day",
+        "icon": "mdi:fire",
+    },
+    "body_age": {
+        "name": "Body Age",
+        "unit": "years",
+        "icon": "mdi:calendar-account",
+    },
+    "visceral_fat": {
+        "name": "Visceral Fat",
+        "unit": "level",
+        "icon": "mdi:stomach",
+    },
+    "protein_ratio": {
+        "name": "Protein Ratio",
+        "unit": "%",
+        "icon": "mdi:food-drumstick",
     },
 } 

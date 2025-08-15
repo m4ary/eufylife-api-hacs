@@ -26,7 +26,7 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from .const import API_BASE_URL, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN, SENSOR_TYPES, USER_AGENT_VERSION
+from .const import API_BASE_URL, CONF_DATA_LOOKBACK_DAYS, CONF_UPDATE_INTERVAL, DEFAULT_DATA_LOOKBACK_DAYS, DEFAULT_UPDATE_INTERVAL, DOMAIN, SENSOR_TYPES, USER_AGENT_VERSION
 from .models import EufyLifeConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
@@ -154,16 +154,26 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch recent device data from EufyLife API."""
         data = self.entry.runtime_data
         
-        # Calculate timestamp for last 24 hours
+        # Calculate timestamp for lookback period (configurable, default 30 days)
         import time as time_module
-        since_timestamp = int(time_module.time()) - 86400  # 24 hours ago
+        lookback_days = self.entry.data.get(CONF_DATA_LOOKBACK_DAYS, DEFAULT_DATA_LOOKBACK_DAYS)
+        since_timestamp = int(time_module.time()) - (lookback_days * 24 * 3600)
+        
+        _LOGGER.info(
+            "Fetching device data since timestamp %d (%d days lookback, %s)",
+            since_timestamp,
+            lookback_days,
+            datetime.fromtimestamp(since_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        )
         
         headers = {
+            "Host": "api.eufylife.com",
             "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": f"EufyLife-iOS-{USER_AGENT_VERSION}",
-            "Token": data.access_token,
             "Uid": data.user_id,
+            "Accept-Encoding": "gzip, deflate, br",
+            "User-Agent": f"Eufylife-iOS-{USER_AGENT_VERSION}-281",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Token": data.access_token,
         }
         
         try:
@@ -184,12 +194,52 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                     device_data = await response.json()
                     _LOGGER.debug("Device data response: %s", device_data)
                     
+                    # Extract the actual data array from the response
+                    actual_data = []
+                    if isinstance(device_data, dict):
+                        # API returns structured response like {'res_code': 1, 'data': [...]}
+                        actual_data = device_data.get('data', [])
+                        res_code = device_data.get('res_code')
+                        message = device_data.get('message', '')
+                        
+                        _LOGGER.info(
+                            "Device data API response: res_code=%s, message='%s', records=%d",
+                            res_code, message, len(actual_data) if actual_data else 0
+                        )
+                        
+                        if res_code != 1:
+                            _LOGGER.warning("Device data API returned error: res_code=%s, message='%s'", res_code, message)
+                            return {}
+                    elif isinstance(device_data, list):
+                        # Direct list response
+                        actual_data = device_data
+                        _LOGGER.info("Device data API returned direct list with %d records", len(actual_data))
+                    
                     # Process device data if available
-                    if device_data and isinstance(device_data, list) and len(device_data) > 0:
-                        _LOGGER.info("Retrieved %d device data records", len(device_data))
-                        return device_data
+                    if actual_data and len(actual_data) > 0:
+                        _LOGGER.info("Retrieved %d device data records for processing", len(actual_data))
+                        
+                        # Log sample of customer IDs found in data for debugging
+                        customer_ids_found = set()
+                        for record in actual_data[:5]:  # Check first 5 records
+                            cust_id = (record.get("customer_id") or 
+                                      record.get("customerId") or 
+                                      record.get("uid") or 
+                                      record.get("user_id"))
+                            if cust_id:
+                                customer_ids_found.add(cust_id[:8] + "...")
+                        
+                        if customer_ids_found:
+                            _LOGGER.info("Sample customer IDs found in device data: %s", list(customer_ids_found))
+                        
+                        return actual_data
                     else:
-                        _LOGGER.debug("No recent device data found")
+                        _LOGGER.warning(
+                            "No device data found in last %d days (since %s). "
+                            "Try taking a measurement on your scale to generate new data.",
+                            lookback_days,
+                            datetime.fromtimestamp(since_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                        )
                         return {}
                 else:
                     _LOGGER.debug("Device data request failed with status %d", response.status)
@@ -207,118 +257,114 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         
         for i, record in enumerate(device_data):
             try:
-                # Extract customer ID - might be in different fields
-                customer_id = record.get("customer_id") or record.get("customerId") or record.get("uid")
+                # Extract customer ID
+                customer_id = record.get("customer_id")
                 if not customer_id:
                     _LOGGER.debug("Device record #%d missing customer_id, skipping", i)
                     continue
                 
-                # Extract measurement data
-                # Device data might have current measurements in different format
-                weight = None
-                body_fat = None
-                muscle_mass = None
-                target_weight = None
+                # Extract scale_data (the main measurement data)
+                scale_data = record.get("scale_data", {})
+                if not scale_data:
+                    _LOGGER.debug("Device record #%d for customer %s missing scale_data, skipping", 
+                                 i, customer_id[:8])
+                    continue
+                
+                # Extract timestamp from update_time
                 timestamp = None
-                
-                # Try different possible field names for weight (in grams, need to convert to kg)
-                weight_raw = (record.get("weight") or 
-                             record.get("current_weight") or 
-                             record.get("bodyWeight") or 
-                             record.get("body_weight"))
-                
-                if weight_raw:
-                    # Device data weight might be in grams or already in kg with decimal
-                    if isinstance(weight_raw, (int, float)):
-                        if weight_raw > 1000:  # Assume grams if > 1000
-                            weight = weight_raw / 1000.0
-                        else:
-                            weight = float(weight_raw)
-                
-                # Try different field names for target weight
-                target_weight_raw = (record.get("target_weight") or 
-                                    record.get("targetWeight") or 
-                                    record.get("goal_weight") or 
-                                    record.get("goalWeight"))
-                
-                if target_weight_raw:
-                    # Device data target weight might be in grams or already in kg with decimal
-                    if isinstance(target_weight_raw, (int, float)):
-                        if target_weight_raw > 1000:  # Assume grams if > 1000
-                            target_weight = target_weight_raw / 1000.0
-                        else:
-                            target_weight = float(target_weight_raw)
-                
-                # Try different field names for body fat percentage
-                body_fat = (record.get("body_fat") or 
-                           record.get("bodyfat") or 
-                           record.get("bodyFat") or 
-                           record.get("current_bodyfat"))
-                
-                # Try different field names for muscle mass
-                muscle_mass_raw = (record.get("muscle_mass") or 
-                                  record.get("muscle") or 
-                                  record.get("muscleMass") or 
-                                  record.get("current_muscle_mass"))
-                
-                if muscle_mass_raw and isinstance(muscle_mass_raw, (int, float)):
-                    muscle_mass = float(muscle_mass_raw)
-                
-                # Try different field names for timestamp
-                timestamp_raw = (record.get("timestamp") or 
-                                record.get("time") or 
-                                record.get("created_at") or 
-                                record.get("measureTime") or 
-                                record.get("update_time"))
-                
-                if timestamp_raw:
+                update_time = record.get("update_time") or record.get("create_time")
+                if update_time:
                     try:
-                        if isinstance(timestamp_raw, str):
-                            # Try to parse ISO format timestamp
-                            from datetime import datetime
-                            timestamp = datetime.fromisoformat(timestamp_raw.replace('Z', '+00:00'))
-                        elif isinstance(timestamp_raw, (int, float)):
-                            timestamp = datetime.fromtimestamp(timestamp_raw)
+                        timestamp = datetime.fromtimestamp(update_time)
                     except Exception as ts_err:
-                        _LOGGER.debug("Could not parse timestamp %s: %s", timestamp_raw, ts_err)
+                        _LOGGER.debug("Could not parse timestamp %s: %s", update_time, ts_err)
                 
-                # Only process if we have some meaningful data
-                if weight or body_fat or muscle_mass or target_weight:
-                    customer_data = {}
-                    
-                    if weight:
-                        customer_data["weight"] = round(weight, 1)
-                        customer_data["device_weight"] = True  # Mark as from device data
-                    
-                    if target_weight:
-                        customer_data["target_weight"] = round(target_weight, 1)
-                        customer_data["device_target_weight"] = True
-                    
-                    if body_fat:
-                        customer_data["body_fat"] = round(float(body_fat), 1)
-                        customer_data["device_body_fat"] = True
-                    
-                    if muscle_mass:
-                        customer_data["muscle_mass"] = round(muscle_mass, 1)
-                        customer_data["device_muscle_mass"] = True
-                    
-                    if timestamp:
-                        customer_data["last_update"] = timestamp
-                        customer_data["device_timestamp"] = True
-                    
-                    # Merge with existing data for this customer or create new
-                    if customer_id in processed_data:
-                        processed_data[customer_id].update(customer_data)
-                    else:
-                        processed_data[customer_id] = customer_data
+                # Extract measurements from scale_data
+                customer_data = {}
+                
+                # Weight (convert from grams to kg)
+                weight_grams = scale_data.get("weight")
+                if weight_grams and isinstance(weight_grams, (int, float)):
+                    customer_data["weight"] = round(weight_grams / 1000.0, 1)
+                    customer_data["device_weight"] = True
+                
+                # Body Fat percentage
+                body_fat = scale_data.get("body_fat")
+                if body_fat and isinstance(body_fat, (int, float)):
+                    customer_data["body_fat"] = round(float(body_fat), 1)
+                    customer_data["device_body_fat"] = True
+                
+                # Muscle Mass (already in kg)
+                muscle_mass = scale_data.get("muscle_mass")
+                if muscle_mass and isinstance(muscle_mass, (int, float)):
+                    customer_data["muscle_mass"] = round(float(muscle_mass), 1)
+                    customer_data["device_muscle_mass"] = True
+                
+                # BMI (already calculated by the scale)
+                bmi = scale_data.get("bmi")
+                if bmi and isinstance(bmi, (int, float)):
+                    customer_data["bmi"] = round(float(bmi), 1)
+                    customer_data["device_bmi"] = True
+                
+                # Additional body composition data
+                water_percentage = scale_data.get("water")
+                if water_percentage and isinstance(water_percentage, (int, float)):
+                    customer_data["water_percentage"] = round(float(water_percentage), 1)
+                    customer_data["device_water_percentage"] = True
+                
+                bone_mass = scale_data.get("bone_mass")
+                if bone_mass and isinstance(bone_mass, (int, float)):
+                    customer_data["bone_mass"] = round(float(bone_mass), 1)
+                    customer_data["device_bone_mass"] = True
+                
+                bmr = scale_data.get("bmr")
+                if bmr and isinstance(bmr, (int, float)):
+                    customer_data["bmr"] = int(bmr)
+                    customer_data["device_bmr"] = True
+                
+                body_age = scale_data.get("body_age")
+                if body_age and isinstance(body_age, (int, float)):
+                    customer_data["body_age"] = int(body_age)
+                    customer_data["device_body_age"] = True
+                
+                visceral_fat = scale_data.get("visceral_fat")
+                if visceral_fat and isinstance(visceral_fat, (int, float)):
+                    customer_data["visceral_fat"] = round(float(visceral_fat), 1)
+                    customer_data["device_visceral_fat"] = True
+                
+                protein_ratio = scale_data.get("protein_ratio")
+                if protein_ratio and isinstance(protein_ratio, (int, float)):
+                    customer_data["protein_ratio"] = round(float(protein_ratio), 1)
+                    customer_data["device_protein_ratio"] = True
+                
+                # Add timestamp
+                if timestamp:
+                    customer_data["last_update"] = timestamp
+                    customer_data["device_timestamp"] = True
+                
+                # Add device info
+                device_id = record.get("device_id")
+                product_code = record.get("product_code")
+                if device_id:
+                    customer_data["device_id"] = device_id
+                if product_code:
+                    customer_data["product_code"] = product_code
+                
+                # Only process if we have some meaningful measurement data
+                if any(key in customer_data for key in ["weight", "body_fat", "muscle_mass", "bmi"]):
+                    processed_data[customer_id] = customer_data
                     
                     _LOGGER.debug(
-                        "Processed device record #%d for customer %s: weight=%s, target_weight=%s, body_fat=%s, muscle_mass=%s",
-                        i, customer_id[:8] if customer_id else "unknown", weight, target_weight, body_fat, muscle_mass
+                        "Processed device record #%d for customer %s: weight=%s kg, body_fat=%s%%, muscle_mass=%s kg, bmi=%s",
+                        i, customer_id[:8], 
+                        customer_data.get("weight"), 
+                        customer_data.get("body_fat"),
+                        customer_data.get("muscle_mass"),
+                        customer_data.get("bmi")
                     )
                 else:
                     _LOGGER.debug("Device record #%d for customer %s contains no usable measurement data", 
-                                 i, customer_id[:8] if customer_id else "unknown")
+                                 i, customer_id[:8])
                     
             except Exception as err:
                 _LOGGER.warning("Error processing device record #%d: %s", i, err)
@@ -449,14 +495,19 @@ class EufyLifeSensorEntity(CoordinatorEntity, SensorEntity):
         _LOGGER.debug("Raw value for %s sensor (customer %s): %s", 
                      self.sensor_type, self.customer_id[:8], value)
         
-        # Handle special cases
-        if self.sensor_type in ["weight", "target_weight", "muscle_mass"] and value:
+        # Handle special cases for different measurement types
+        if self.sensor_type in ["weight", "target_weight", "muscle_mass", "bone_mass"] and value:
             processed_value = round(float(value), 1)
             _LOGGER.debug("Processed %s value for customer %s: %s -> %s", 
                          self.sensor_type, self.customer_id[:8], value, processed_value)
             return processed_value
-        elif self.sensor_type == "body_fat" and value:
+        elif self.sensor_type in ["body_fat", "water_percentage", "visceral_fat", "protein_ratio", "bmi"] and value:
             processed_value = round(float(value), 1)
+            _LOGGER.debug("Processed %s value for customer %s: %s -> %s", 
+                         self.sensor_type, self.customer_id[:8], value, processed_value)
+            return processed_value
+        elif self.sensor_type in ["bmr", "body_age"] and value:
+            processed_value = int(value)
             _LOGGER.debug("Processed %s value for customer %s: %s -> %s", 
                          self.sensor_type, self.customer_id[:8], value, processed_value)
             return processed_value
@@ -502,6 +553,12 @@ class EufyLifeSensorEntity(CoordinatorEntity, SensorEntity):
         device_data_key = f"device_{self.sensor_type}"
         if customer_data.get(device_data_key):
             attrs["from_device_data"] = True
+            
+        # Add device information if available
+        if customer_data.get("device_id"):
+            attrs["device_id"] = customer_data["device_id"]
+        if customer_data.get("product_code"):
+            attrs["product_code"] = customer_data["product_code"]
         
         _LOGGER.debug("Attributes for %s sensor (customer %s): %s", 
                      self.sensor_type, self.customer_id[:8], attrs)
