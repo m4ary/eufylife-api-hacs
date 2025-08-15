@@ -114,17 +114,8 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Error communicating with API: {err}") from err
 
     async def _fetch_data(self) -> dict[str, Any]:
-        """Fetch data from EufyLife API."""
+        """Fetch data from EufyLife API using device data endpoint only."""
         data = self.entry.runtime_data
-        
-        # Try device data endpoint first (more recent data)
-        device_data = await self._fetch_device_data()
-        processed_device_data = {}
-        if device_data:
-            _LOGGER.info("Device data endpoint returned %d records, processing...", len(device_data))
-            processed_device_data = await self._process_device_data(device_data)
-        
-        # Continue with existing target endpoint logic for fallback
         
         # Log token status
         current_time = time.time()
@@ -147,97 +138,17 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
             )
             return {}
         
-        _LOGGER.debug("Token is valid, proceeding with API calls")
-
-        headers = {
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": f"EufyLife-iOS-{USER_AGENT_VERSION}",
-            "Category": "Health",
-            "Language": "en",
-            "Timezone": "UTC",
-            "Country": "US",
-            "Token": data.access_token,
-            "Uid": data.user_id,
-        }
+        _LOGGER.debug("Token is valid, proceeding with device data API call")
         
-        _LOGGER.debug("Making API request to: %s/v1/customer/all_target", API_BASE_URL)
-        _LOGGER.debug("Request headers (token redacted): %s", {k: v if k != "Token" else "***REDACTED***" for k, v in headers.items()})
-
-        try:
-            # Fetch current weight targets
-            start_time = time.time()
-            async with self.session.get(
-                f"{API_BASE_URL}/v1/customer/all_target",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as response:
-                request_duration = time.time() - start_time
-                
-                _LOGGER.debug(
-                    "API request completed in %.2f seconds. Status: %d, Headers: %s",
-                    request_duration,
-                    response.status,
-                    dict(response.headers)
-                )
-                
-                if response.status == 200:
-                    target_data = await response.json()
-                    _LOGGER.debug("API response received: %s", target_data)
-                    
-                    if target_data.get("res_code") == 1:
-                        _LOGGER.info("API response successful, processing target data...")
-                        target_processed_data = await self._process_target_data(target_data, headers)
-                        
-                        # Merge device data with target data, prioritizing device data
-                        final_data = target_processed_data.copy()
-                        for customer_id, device_info in processed_device_data.items():
-                            if customer_id in final_data:
-                                # Update existing customer data with device data
-                                final_data[customer_id].update(device_info)
-                                _LOGGER.debug("Updated customer %s with device data", customer_id[:8])
-                            else:
-                                # Add new customer from device data
-                                final_data[customer_id] = device_info
-                                _LOGGER.debug("Added new customer %s from device data", customer_id[:8])
-                        
-                        if processed_device_data:
-                            _LOGGER.info("Merged device data for %d customers with target data", len(processed_device_data))
-                        
-                        return final_data
-                    else:
-                        _LOGGER.error(
-                            "API returned error response. res_code: %s, message: %s",
-                            target_data.get("res_code"),
-                            target_data.get("res_msg", "Unknown error")
-                        )
-                        # Return device data only if target data failed
-                        return processed_device_data
-                else:
-                    response_text = await response.text()
-                    _LOGGER.error(
-                        "API request failed with status %d. Response: %s",
-                        response.status,
-                        response_text[:500]  # Limit response text length
-                    )
-                    # Return device data if available, empty dict otherwise
-                    return processed_device_data
-
-        except asyncio.TimeoutError:
-            _LOGGER.error(
-                "Timeout fetching data from EufyLife API after 30 seconds. "
-                "Check internet connection and API availability."
-            )
-            # Return device data if available, empty dict otherwise  
+        # Fetch device data only (most recent and reliable data)
+        device_data = await self._fetch_device_data()
+        if device_data:
+            _LOGGER.info("Device data endpoint returned %d records, processing...", len(device_data))
+            processed_device_data = await self._process_device_data(device_data)
             return processed_device_data
-        except aiohttp.ClientError as err:
-            _LOGGER.error("HTTP client error fetching data from EufyLife API: %s", err)
-            # Return device data if available, empty dict otherwise
-            return processed_device_data
-        except Exception as err:
-            _LOGGER.error("Unexpected error fetching data from EufyLife API: %s", err, exc_info=True)
-            # Return device data if available, empty dict otherwise
-            return processed_device_data
+        else:
+            _LOGGER.warning("No device data available from API")
+            return {}
 
     async def _fetch_device_data(self) -> dict[str, Any]:
         """Fetch recent device data from EufyLife API."""
@@ -307,6 +218,7 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                 weight = None
                 body_fat = None
                 muscle_mass = None
+                target_weight = None
                 timestamp = None
                 
                 # Try different possible field names for weight (in grams, need to convert to kg)
@@ -322,6 +234,20 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                             weight = weight_raw / 1000.0
                         else:
                             weight = float(weight_raw)
+                
+                # Try different field names for target weight
+                target_weight_raw = (record.get("target_weight") or 
+                                    record.get("targetWeight") or 
+                                    record.get("goal_weight") or 
+                                    record.get("goalWeight"))
+                
+                if target_weight_raw:
+                    # Device data target weight might be in grams or already in kg with decimal
+                    if isinstance(target_weight_raw, (int, float)):
+                        if target_weight_raw > 1000:  # Assume grams if > 1000
+                            target_weight = target_weight_raw / 1000.0
+                        else:
+                            target_weight = float(target_weight_raw)
                 
                 # Try different field names for body fat percentage
                 body_fat = (record.get("body_fat") or 
@@ -357,12 +283,16 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                         _LOGGER.debug("Could not parse timestamp %s: %s", timestamp_raw, ts_err)
                 
                 # Only process if we have some meaningful data
-                if weight or body_fat or muscle_mass:
+                if weight or body_fat or muscle_mass or target_weight:
                     customer_data = {}
                     
                     if weight:
                         customer_data["weight"] = round(weight, 1)
                         customer_data["device_weight"] = True  # Mark as from device data
+                    
+                    if target_weight:
+                        customer_data["target_weight"] = round(target_weight, 1)
+                        customer_data["device_target_weight"] = True
                     
                     if body_fat:
                         customer_data["body_fat"] = round(float(body_fat), 1)
@@ -383,8 +313,8 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                         processed_data[customer_id] = customer_data
                     
                     _LOGGER.debug(
-                        "Processed device record #%d for customer %s: weight=%s, body_fat=%s, muscle_mass=%s",
-                        i, customer_id[:8] if customer_id else "unknown", weight, body_fat, muscle_mass
+                        "Processed device record #%d for customer %s: weight=%s, target_weight=%s, body_fat=%s, muscle_mass=%s",
+                        i, customer_id[:8] if customer_id else "unknown", weight, target_weight, body_fat, muscle_mass
                     )
                 else:
                     _LOGGER.debug("Device record #%d for customer %s contains no usable measurement data", 
@@ -397,112 +327,7 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.info("Successfully processed device data for %d customers", len(processed_data))
         return processed_data
 
-    async def _process_target_data(self, target_data: dict, headers: dict) -> dict[str, Any]:
-        """Process target data and fetch additional customer details."""
-        processed_data = {}
-        
-        target_list = target_data.get("target_list", [])
-        _LOGGER.debug("Processing %d targets from API response", len(target_list))
-        
-        for i, target in enumerate(target_list):
-            customer_id = target.get("customer_id")
-            if not customer_id:
-                _LOGGER.warning("Target #%d missing customer_id, skipping", i)
-                continue
-                
-            _LOGGER.debug("Processing target #%d for customer %s", i, customer_id[:8])
-            
-            # Get customer details for additional body composition data
-            customer_details = await self._fetch_customer_details(customer_id, headers)
-            
-            # Process the data with detailed logging
-            raw_weight = target.get("current_weight", 0)
-            raw_target_weight = target.get("target_weight", 0)
-            raw_body_fat = target.get("current_bodyfat", 0)
-            raw_muscle_mass = target.get("current_muscle_mass", 0)
-            update_time = target.get("update_time", 0)
-            
-            _LOGGER.debug(
-                "Raw data for customer %s: weight=%s, target_weight=%s, body_fat=%s, muscle_mass=%s, update_time=%s",
-                customer_id[:8], raw_weight, raw_target_weight, raw_body_fat, raw_muscle_mass, update_time
-            )
-            
-            customer_data = {
-                "weight": raw_weight / 10.0 if raw_weight else 0,  # Convert from tenths
-                "target_weight": raw_target_weight / 10.0 if raw_target_weight else 0,
-                "body_fat": raw_body_fat,
-                "muscle_mass": raw_muscle_mass,
-                "last_update": datetime.fromtimestamp(update_time) if update_time else None,
-            }
-            
-            # Calculate BMI if we have weight and height data
-            if customer_data["weight"] > 0:
-                # BMI calculation would need height data, for now we'll estimate
-                customer_data["bmi"] = None  # Would need height from user profile
-            
-            # Add customer details if available
-            if customer_details:
-                _LOGGER.debug("Adding customer details: %s", customer_details)
-                customer_data.update(customer_details)
-            
-            _LOGGER.debug(
-                "Processed data for customer %s: %s",
-                customer_id[:8],
-                {k: v for k, v in customer_data.items() if k != "last_update"}
-            )
-            
-            processed_data[customer_id] = customer_data
-            
-        _LOGGER.info("Successfully processed data for %d customers", len(processed_data))
-        return processed_data
 
-    async def _fetch_customer_details(self, customer_id: str, headers: dict) -> dict[str, Any]:
-        """Fetch detailed customer data."""
-        _LOGGER.debug("Fetching detailed data for customer %s", customer_id[:8])
-        
-        try:
-            start_time = time.time()
-            async with self.session.get(
-                f"{API_BASE_URL}/v1/customer/target/{customer_id}",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as response:
-                request_duration = time.time() - start_time
-                
-                _LOGGER.debug(
-                    "Customer detail request for %s completed in %.2f seconds. Status: %d",
-                    customer_id[:8], request_duration, response.status
-                )
-                
-                if response.status == 200:
-                    data = await response.json()
-                    _LOGGER.debug("Customer detail response for %s: %s", customer_id[:8], data)
-                    
-                    if data.get("res_code") == 1 and "target" in data:
-                        target = data["target"]
-                        details = {
-                            "detailed_weight": target.get("current_weight", 0) / 10.0,
-                            "detailed_body_fat": target.get("current_bodyfat", 0),
-                            "detailed_muscle_mass": target.get("current_muscle_mass", 0),
-                            "target_body_fat": target.get("target_bodyfat", 0),
-                        }
-                        _LOGGER.debug("Extracted customer details for %s: %s", customer_id[:8], details)
-                        return details
-                    else:
-                        _LOGGER.warning(
-                            "Customer detail API returned error for %s. res_code: %s",
-                            customer_id[:8], data.get("res_code")
-                        )
-                else:
-                    _LOGGER.warning(
-                        "Customer detail request failed for %s with status %d",
-                        customer_id[:8], response.status
-                    )
-                    
-        except Exception as err:
-            _LOGGER.warning("Error fetching customer details for %s: %s", customer_id[:8], err)
-            
-        return {}
 
     def update_interval_from_config(self) -> None:
         """Update the coordinator's update interval from config entry."""
@@ -670,16 +495,8 @@ class EufyLifeSensorEntity(CoordinatorEntity, SensorEntity):
             if self.coordinator._last_successful_update:
                 attrs["last_successful_update"] = self.coordinator._last_successful_update.isoformat()
         
-        # Add data source information
-        data_sources = []
-        if customer_data.get("device_weight") or customer_data.get("device_body_fat") or customer_data.get("device_muscle_mass"):
-            data_sources.append("device_data")
-        if any(key not in ["device_weight", "device_body_fat", "device_muscle_mass", "device_timestamp"] 
-               for key in customer_data.keys() if key.startswith(("weight", "body_fat", "muscle_mass", "target_"))):
-            data_sources.append("target_data")
-        
-        if data_sources:
-            attrs["data_source"] = ", ".join(data_sources)
+        # Add data source information (device data only)
+        attrs["data_source"] = "device_data"
             
         # Add specific device data indicators for this sensor type
         device_data_key = f"device_{self.sensor_type}"
