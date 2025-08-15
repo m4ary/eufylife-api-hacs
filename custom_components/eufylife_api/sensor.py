@@ -282,39 +282,39 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                 # Extract measurements from scale_data
                 customer_data = {}
                 
-                # Weight (convert from grams to kg)
-                weight_grams = scale_data.get("weight")
-                if weight_grams and isinstance(weight_grams, (int, float)):
-                    customer_data["weight"] = round(weight_grams / 1000.0, 1)
+                # Weight (convert from decigrams to kg)
+                weight_decigrams = scale_data.get("weight")
+                if weight_decigrams and isinstance(weight_decigrams, (int, float)):
+                    customer_data["weight"] = round(weight_decigrams / 10.0, 2)
                     customer_data["device_weight"] = True
                 
                 # Body Fat percentage
                 body_fat = scale_data.get("body_fat")
                 if body_fat and isinstance(body_fat, (int, float)):
-                    customer_data["body_fat"] = round(float(body_fat), 1)
+                    customer_data["body_fat"] = round(float(body_fat), 2)
                     customer_data["device_body_fat"] = True
                 
                 # Muscle Mass (already in kg)
                 muscle_mass = scale_data.get("muscle_mass")
                 if muscle_mass and isinstance(muscle_mass, (int, float)):
-                    customer_data["muscle_mass"] = round(float(muscle_mass), 1)
+                    customer_data["muscle_mass"] = round(float(muscle_mass), 2)
                     customer_data["device_muscle_mass"] = True
                 
                 # BMI (already calculated by the scale)
                 bmi = scale_data.get("bmi")
                 if bmi and isinstance(bmi, (int, float)):
-                    customer_data["bmi"] = round(float(bmi), 1)
+                    customer_data["bmi"] = round(float(bmi), 2)
                     customer_data["device_bmi"] = True
                 
                 # Additional body composition data
                 water_percentage = scale_data.get("water")
                 if water_percentage and isinstance(water_percentage, (int, float)):
-                    customer_data["water_percentage"] = round(float(water_percentage), 1)
+                    customer_data["water_percentage"] = round(float(water_percentage), 2)
                     customer_data["device_water_percentage"] = True
                 
                 bone_mass = scale_data.get("bone_mass")
                 if bone_mass and isinstance(bone_mass, (int, float)):
-                    customer_data["bone_mass"] = round(float(bone_mass), 1)
+                    customer_data["bone_mass"] = round(float(bone_mass), 2)
                     customer_data["device_bone_mass"] = True
                 
                 bmr = scale_data.get("bmr")
@@ -329,12 +329,12 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                 
                 visceral_fat = scale_data.get("visceral_fat")
                 if visceral_fat and isinstance(visceral_fat, (int, float)):
-                    customer_data["visceral_fat"] = round(float(visceral_fat), 1)
+                    customer_data["visceral_fat"] = round(float(visceral_fat), 2)
                     customer_data["device_visceral_fat"] = True
                 
                 protein_ratio = scale_data.get("protein_ratio")
                 if protein_ratio and isinstance(protein_ratio, (int, float)):
-                    customer_data["protein_ratio"] = round(float(protein_ratio), 1)
+                    customer_data["protein_ratio"] = round(float(protein_ratio), 2)
                     customer_data["device_protein_ratio"] = True
                 
                 # Add timestamp
@@ -497,12 +497,12 @@ class EufyLifeSensorEntity(CoordinatorEntity, SensorEntity):
         
         # Handle special cases for different measurement types
         if self.sensor_type in ["weight", "target_weight", "muscle_mass", "bone_mass"] and value:
-            processed_value = round(float(value), 1)
+            processed_value = round(float(value), 2)
             _LOGGER.debug("Processed %s value for customer %s: %s -> %s", 
                          self.sensor_type, self.customer_id[:8], value, processed_value)
             return processed_value
         elif self.sensor_type in ["body_fat", "water_percentage", "visceral_fat", "protein_ratio", "bmi"] and value:
-            processed_value = round(float(value), 1)
+            processed_value = round(float(value), 2)
             _LOGGER.debug("Processed %s value for customer %s: %s -> %s", 
                          self.sensor_type, self.customer_id[:8], value, processed_value)
             return processed_value
