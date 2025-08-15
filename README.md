@@ -23,8 +23,8 @@
 - ⚖️ **Weight Tracking**: Current weight and target weight sensors
 - 📊 **Body Composition**: Body fat percentage, muscle mass, and BMI
 - 👥 **Multi-User**: Supports multiple family members on the same scale
-- 🔄 **Real-time Updates**: Automatic data synchronization every 5 minutes
-- 🎨 **Home Assistant Native**: Full integration with Home Assistant's device and entity system
+- 🔄 **Real-time Updates**: Automatic data synchronization with configurable intervals (1 min to 12 hours)
+- ⚙️ **Configurable**: Adjust update frequency after setup without restarting Home Assistante
 
 ## Installation
 
@@ -57,8 +57,26 @@ Configuration is done through the Home Assistant UI:
 3. Enter your EufyLife account credentials:
    - **Email**: Your EufyLife account email
    - **Password**: Your EufyLife account password
-4. The integration will automatically discover your devices and family members
-5. Sensors will be created for each family member
+4. Choose your preferred update interval (default: 5 minutes)
+5. The integration will automatically discover your devices and family members
+6. Sensors will be created for each family member
+
+### Update Intervals
+
+You can configure how often the integration fetches new data:
+
+- **1 minute**: For frequent weighing sessions
+- **2 minutes**: For regular daily use
+- **5 minutes**: Recommended default
+- **10, 15, 30 minutes**: For moderate usage
+- **1, 2, 6, 12 hours**: For occasional use
+
+To change the update interval after setup:
+1. Go to **Configuration** → **Integrations**
+2. Find "EufyLife API" and click on it
+3. Click the **Options** button
+4. Select your desired update interval
+5. Click **Submit**
 
 ## Supported Devices
 
@@ -74,6 +92,14 @@ For each family member, the integration creates the following sensors:
 - **Muscle Mass** (`sensor.{name}_muscle_mass`) - Muscle mass in kg
 - **BMI** (`sensor.{name}_bmi`) - Body Mass Index
 
+### Device Information
+
+Each family member appears as a separate device in Home Assistant with:
+- Device name: "EufyLife Customer [ID]"
+- Manufacturer: EufyLife
+- Model: Smart Scale
+- Last update timestamp and interval information
+
 ## API Details
 
 This integration uses the official EufyLife API endpoints:
@@ -82,15 +108,11 @@ This integration uses the official EufyLife API endpoints:
 - **Weight Data**: `GET /v1/customer/all_target`
 - **Detailed Data**: `GET /v1/customer/target/{customer_id}`
 
-## Data Update Frequency
-
-- **Automatic Updates**: Every 5 minutes
-- **Manual Refresh**: Use the "Reload" button in the integration settings
-- **Token Management**: Automatically checks token validity before each update
 
 ## Limitations
 
 - Requires active internet connection for cloud API access
+- data are avaialbe after open the app in your phone
 - Token expires after 30 days (automatic re-authentication planned for future versions)
 - Historical data is limited to what's available via the current API endpoints
 
@@ -98,9 +120,10 @@ This integration uses the official EufyLife API endpoints:
 
 If you want to contribute to this please read the [Contribution guidelines](.github/CONTRIBUTING.md)
 
-## Credits
 
-Code template was mainly taken from [@Ludeeus](https://github.com/ludeeus)'s [integration_blueprint][integration_blueprint] template
+## Disclaimer
+
+This is an unofficial integration. EufyLife and Eufy are trademarks of Anker Innovations Limited.
 
 ---
 
