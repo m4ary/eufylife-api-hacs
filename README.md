@@ -20,11 +20,12 @@
 ## Features
 
 - 🔐 **Easy Setup**: Email/password authentication through Home Assistant UI
+- 🔄 **Automatic Token Refresh**: Seamless re-authentication before token expiration (no manual intervention needed)
 - ⚖️ **Weight Tracking**: Current weight and target weight sensors
 - 📊 **Body Composition**: Body fat percentage, muscle mass, and BMI
 - 👥 **Multi-User**: Supports multiple family members on the same scale
 - 🔄 **Real-time Updates**: Automatic data synchronization with configurable intervals (1 min to 12 hours)
-- ⚙️ **Configurable**: Adjust update frequency after setup without restarting Home Assistante
+- ⚙️ **Configurable**: Adjust update frequency after setup without restarting Home Assistant
 
 ## Installation
 
@@ -78,6 +79,40 @@ To change the update interval after setup:
 4. Select your desired update interval
 5. Click **Submit**
 
+## Automatic Token Refresh
+
+The integration includes automatic token refresh functionality to ensure uninterrupted service:
+
+### How It Works
+
+- **Proactive Refresh**: Tokens are automatically refreshed **1 hour before expiration** (30-day token lifetime)
+- **Reactive Refresh**: If the API returns 401 (Unauthorized) or 403 (Forbidden), automatic re-authentication is triggered
+- **Retry Logic**: Up to 3 automatic retry attempts with exponential backoff (1s, 5s, 15s delays)
+- **Silent Operation**: No user notifications during successful refreshes
+- **Fallback**: If all retry attempts fail, you'll receive a notification to reconfigure the integration
+
+### What You Need to Know
+
+- **No manual intervention required** for token expiration
+- Credentials are securely stored and used only for automatic re-authentication
+- If re-authentication fails after 3 attempts, you'll see:
+  - A persistent notification in Home Assistant
+  - A reauth flow prompt to update your credentials
+
+### Troubleshooting
+
+If you receive an "Authentication Required" notification:
+
+1. Check if your EufyLife account credentials have changed
+2. Go to **Configuration** → **Integrations** → **EufyLife API**
+3. Click **Configure** and enter your current credentials
+4. The integration will resume automatic operation
+
+**Common causes**:
+- Password changed in EufyLife mobile app
+- Account locked due to security reasons
+- Temporary API issues (rare)
+
 ## Supported Devices
 
 - EufyLife smart scales connected to the EufyLife mobile app
@@ -112,8 +147,7 @@ This integration uses the official EufyLife API endpoints:
 ## Limitations
 
 - Requires active internet connection for cloud API access
-- data are avaialbe after open the app in your phone
-- Token expires after 30 days (automatic re-authentication planned for future versions)
+- Data are available after opening the app on your phone
 - Historical data is limited to what's available via the current API endpoints
 
 ## Contributions are welcome!
