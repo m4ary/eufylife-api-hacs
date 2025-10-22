@@ -26,6 +26,7 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
+from .auth import EufyLifeAuthManager
 from .const import API_BASE_URL, CONF_DATA_LOOKBACK_DAYS, CONF_UPDATE_INTERVAL, DEFAULT_DATA_LOOKBACK_DAYS, DEFAULT_UPDATE_INTERVAL, DOMAIN, SENSOR_TYPES, USER_AGENT_VERSION
 from .models import EufyLifeConfigEntry
 
@@ -44,6 +45,15 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_successful_update = None
         self._consecutive_failures = 0
         self._last_device_timestamp = None  # Track last measurement timestamp
+        self._auth_failed_permanently = False  # Track if re-auth failed after 3 attempts
+        self._needs_reauth = False  # Flag to trigger re-auth on next update
+
+        # Initialize auth manager for automatic token refresh
+        self.auth_manager = EufyLifeAuthManager(
+            session=self.session,
+            email=entry.data.get("email", ""),
+            password=entry.data.get("password", "")
+        )
         
         # Get update interval from config, fallback to default
         update_interval_seconds = entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
@@ -117,28 +127,72 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
     async def _fetch_data(self) -> dict[str, Any]:
         """Fetch data from EufyLife API using device data endpoint only."""
         data = self.entry.runtime_data
-        
-        # Log token status
-        current_time = time.time()
-        token_expires_at = data.expires_at
-        time_until_expiry = token_expires_at - current_time
-        
-        _LOGGER.debug(
-            "Token status: expires_at=%s, current_time=%s, time_until_expiry=%.1f minutes",
-            datetime.fromtimestamp(token_expires_at).strftime('%Y-%m-%d %H:%M:%S'),
-            datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S'),
-            time_until_expiry / 60
+
+        # Skip if authentication failed permanently (after 3 retries)
+        if self._auth_failed_permanently:
+            _LOGGER.debug("Skipping update - authentication failed permanently, awaiting manual reauth")
+            return self.data if self.data else {}
+
+        # Check if we need to refresh token (proactive or reactive)
+        should_refresh = (
+            self.auth_manager.should_refresh_token(data.expires_at) or
+            self._needs_reauth
         )
-        
-        # Check token expiry with detailed logging
-        if time_until_expiry <= 300:  # 5 minute buffer
-            _LOGGER.error(
-                "Token expired or expiring soon! Time until expiry: %.1f minutes. "
-                "Re-authentication required. Skipping this update.",
-                time_until_expiry / 60
-            )
-            return {}
-        
+
+        if should_refresh:
+            _LOGGER.info("Token refresh needed, attempting automatic re-authentication...")
+
+            auth_data = await self.auth_manager.refresh_with_retry()
+
+            if auth_data:
+                # Update config entry with new token
+                self.hass.config_entries.async_update_entry(
+                    self.entry,
+                    data={
+                        **self.entry.data,
+                        "access_token": auth_data["access_token"],
+                        "expires_at": auth_data["expires_at"],
+                    }
+                )
+
+                # Update runtime data
+                self.entry.runtime_data.access_token = auth_data["access_token"]
+                self.entry.runtime_data.expires_at = auth_data["expires_at"]
+
+                # Reset flags
+                self._needs_reauth = False
+
+                _LOGGER.info("Token refreshed successfully, continuing with data fetch")
+            else:
+                # All 3 retry attempts failed
+                _LOGGER.error("Token refresh failed after 3 attempts - triggering reauth flow")
+                self._auth_failed_permanently = True
+
+                # Trigger reauth flow
+                self.hass.async_create_task(
+                    self.hass.config_entries.flow.async_init(
+                        DOMAIN,
+                        context={"source": "reauth", "entry_id": self.entry.entry_id},
+                        data=self.entry.data
+                    )
+                )
+
+                # Create persistent notification
+                await self.hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "title": "EufyLife Authentication Required",
+                        "message": (
+                            "Unable to refresh authentication token after multiple attempts. "
+                            "Please reconfigure the EufyLife integration."
+                        ),
+                        "notification_id": f"eufylife_reauth_{self.entry.entry_id}"
+                    }
+                )
+
+                return self.data if self.data else {}
+
         _LOGGER.debug("Token is valid, proceeding with device data API call")
         
         # Fetch device data only (most recent and reliable data)
@@ -220,7 +274,16 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                     request_duration, response.status
                 )
                 
-                if response.status == 200:
+                if response.status in [401, 403]:
+                    # Token is invalid or expired - trigger re-authentication
+                    _LOGGER.warning(
+                        "Received %d %s - token no longer valid, triggering re-authentication",
+                        response.status,
+                        "Unauthorized" if response.status == 401 else "Forbidden"
+                    )
+                    self._needs_reauth = True
+                    return {}
+                elif response.status == 200:
                     device_data = await response.json()
                     _LOGGER.debug("Device data response: %s", device_data)
                     
