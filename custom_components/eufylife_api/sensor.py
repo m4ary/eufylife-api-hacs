@@ -570,6 +570,9 @@ async def async_setup_entry(
     _LOGGER.info("Performing initial data refresh...")
     await coordinator.async_config_entry_first_refresh()
 
+    # Store coordinator for service access
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
     entities = []
     customer_ids = entry.runtime_data.customer_ids
     _LOGGER.info("Creating sensors for %d customers", len(customer_ids))
