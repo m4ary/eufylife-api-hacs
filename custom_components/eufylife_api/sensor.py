@@ -195,7 +195,11 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                             last_update.strftime("%Y-%m-%d %H:%M:%S"),
                         )
 
-            return processed_device_data
+                # Merge new data into existing data so users without a new measurement
+                # since _last_device_timestamp don't lose their previous values.
+                merged_data = dict(self.data) if self.data else {}
+                merged_data.update(processed_device_data)
+                return merged_data
         else:
             # No new data available — preserve existing data to avoid "unknown" sensor state
             if self.data:
