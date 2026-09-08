@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "EufyLife API",
-        "description": "Enter your EufyLife account credentials to connect smart scales and E10 outdoor lights.",
+        "description": "Enter your EufyLife account credentials to connect smart scales and E10 lights.",
         "data": {
           "email": "Email",
           "password": "Password",

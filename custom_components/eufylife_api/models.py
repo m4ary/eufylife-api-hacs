@@ -27,4 +27,4 @@ class EufyLifeData:
     light_cloud: EufyLifeLightCloud | None = None
 
 
-type EufyLifeConfigEntry = ConfigEntry[EufyLifeData]
+EufyLifeConfigEntry = "ConfigEntry[EufyLifeData]"

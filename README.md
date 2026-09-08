@@ -16,7 +16,7 @@
 | Platform | Description |
 | -------- | ----------- |
 | `sensor` | Show current weight, target weight, body fat, muscle mass, and BMI for each family member |
-| `light` | Discover and control Eufy Outdoor Pathway Lights E10 (T8L30) through the Eufy Life cloud |
+| `light` | Discover and control Eufy E10 lights (Outdoor Pathway T8L30, Indoor Floor Lamp T8L40) through the Eufy Life cloud |
 
 ## Features
 
@@ -26,7 +26,7 @@
 - 👥 **Multi-User**: Supports multiple family members on the same scale
 - 🔄 **Real-time Updates**: Automatic data synchronization with configurable intervals (1 min to 12 hours)
 - ⚙️ **Configurable**: Adjust update frequency after setup without restarting Home Assistante
-- 💡 **Outdoor Lights**: On/off, brightness, native RGB picker and classic presets for Eufy E10/T8L30 pathway lights
+- 💡 **E10 Lights**: On/off, brightness, native RGB picker and classic presets for Eufy E10 series (Outdoor Pathway T8L30 and Indoor Floor Lamp T8L40)
 
 ## Installation
 
@@ -86,7 +86,18 @@ To change the update interval after setup:
 ## Supported Devices
 
 - EufyLife smart scales connected to the EufyLife mobile app
-- Eufy Outdoor Pathway Lights E10 (`T8L30`), cloud control including shared accounts
+- Eufy E10 lights, including Outdoor Pathway Lights (`T8L30`) and Indoor Floor Lamp (`T8L40`), cloud control including shared accounts
+
+### Validation
+
+If you have a light that is not being discovered, you can run a validation script to see which devices are linked to your account:
+
+1. Install dependencies: `pip install aiohttp cryptography paho-mqtt`
+2. Run the script: `python3 scripts/validate_lights.py`
+3. Enter your EufyLife credentials when prompted.
+
+The script will list all lights found in your account along with their model IDs,
+and provides an interactive menu to test power, brightness, colors and effects.
 
 ### E10 light controls (experimental)
 
@@ -98,7 +109,7 @@ Existing `light.turn_on`/`light.turn_off` automations keep working.
 ```yaml
 action: light.turn_on
 target:
-  entity_id: light.eufy_outdoor_pathway_lights_e10
+  entity_id: light.eufy_e10_light
 data:
   brightness_pct: 50
   rgb_color: [255, 128, 0]

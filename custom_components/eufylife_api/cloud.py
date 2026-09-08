@@ -40,6 +40,8 @@ _LOGGER = logging.getLogger(__name__)
 
 _LIGHT_PRESET_KEY = "444b380e56f3ffad8aeb4c76494c15f9"
 _T8L30_MODEL = "T8L30"
+_T8L40_MODEL = "T8L40"
+_SUPPORTED_MODELS = {_T8L30_MODEL, _T8L40_MODEL}
 _GET_SETTINGS = (0x02, 0x00)
 _GET_SETTINGS_RESPONSE = (0x0A, 0x00)
 _SET_POWER = (0x02, 0x01)
@@ -61,7 +63,7 @@ class EufyLifeCloudError(Exception):
 
 @dataclass
 class EufyLifeLightDevice:
-    """Cloud-discovered T8L30 light."""
+    """Cloud-discovered E10 light."""
 
     serial: str
     name: str
@@ -279,7 +281,7 @@ class _LightCrypto:
 
 def _tlv(tag: int, value: bytes) -> bytes:
     if len(value) > 255:
-        raise ValueError("T8L30 TLV value is too long")
+        raise ValueError("E10 TLV value is too long")
     return bytes((tag, len(value))) + value
 
 
@@ -401,13 +403,13 @@ def _parse_effects(data: Any) -> dict[str, dict[str, Any]]:
 
 def _parse_frame(frame: bytes) -> tuple[tuple[int, int], bytes]:
     if len(frame) < 10 or frame[:2] != b"\xff\x09":
-        raise ValueError("Invalid T8L30 frame header")
+        raise ValueError("Invalid E10 frame header")
     if frame[4] != 3 or frame[5] not in (0, 1) or frame[6] != 2:
-        raise ValueError("Invalid T8L30 frame protocol")
+        raise ValueError("Invalid E10 frame protocol")
     if int.from_bytes(frame[2:4], "little") != len(frame):
-        raise ValueError("Invalid T8L30 frame length")
+        raise ValueError("Invalid E10 frame length")
     if _xor(frame[:-1]) != frame[-1]:
-        raise ValueError("Invalid T8L30 frame checksum")
+        raise ValueError("Invalid E10 frame checksum")
     return (frame[7], frame[8]), frame[9:-1]
 
 
@@ -416,18 +418,18 @@ def _parse_tlvs(payload: bytes) -> dict[int, bytes]:
     offset = 0
     while offset < len(payload):
         if offset + 2 > len(payload):
-            raise ValueError("Truncated T8L30 TLV header")
+            raise ValueError("Truncated E10 TLV header")
         tag, length = payload[offset : offset + 2]
         offset += 2
         if offset + length > len(payload):
-            raise ValueError("Truncated T8L30 TLV value")
+            raise ValueError("Truncated E10 TLV value")
         result[tag] = payload[offset : offset + length]
         offset += length
     return result
 
 
 class EufyLifeLightCloud:
-    """Discover and control T8L30 lights through Eufy's app cloud."""
+    """Discover and control E10 lights through Eufy's app cloud."""
 
     def __init__(
         self,
@@ -491,7 +493,7 @@ class EufyLifeLightCloud:
             if not isinstance(relation, dict):
                 continue
             raw = relation.get("device", relation)
-            if not isinstance(raw, dict) or raw.get("device_model") != _T8L30_MODEL:
+            if not isinstance(raw, dict) or raw.get("device_model") not in _SUPPORTED_MODELS:
                 continue
             serial = raw.get("device_sn")
             if not isinstance(serial, str) or not serial:
@@ -502,10 +504,11 @@ class EufyLifeLightCloud:
                 account_id = member.get("admin_user_id")
                 if not isinstance(account_id, str) or not account_id:
                     raise EufyLifeCloudError("Shared light is missing its owner ID")
+            model = str(raw.get("device_model"))
             self.devices[serial] = EufyLifeLightDevice(
                 serial=serial,
-                name=str(raw.get("device_name") or "Eufy Outdoor Lights"),
-                model=_T8L30_MODEL,
+                name=str(raw.get("device_name") or "Eufy Light"),
+                model=model,
                 account_id=account_id,
             )
 
@@ -704,7 +707,7 @@ class EufyLifeLightCloud:
             return
         if opcode in (_GET_SETTINGS_RESPONSE, _SET_POWER_RESPONSE):
             if not payload:
-                raise ValueError("T8L30 response is missing its status")
+                raise ValueError("E10 response is missing its status")
             if payload[0] != 0:
                 _LOGGER.warning("Eufy Life command %s rejected: %s", opcode, payload[0])
                 return
@@ -714,7 +717,7 @@ class EufyLifeLightCloud:
             power = values.get(0xA1)
             brightness = values.get(0xA2)
             if brightness is not None and (len(brightness) != 1 or brightness[0] > 100):
-                raise ValueError("Invalid T8L30 brightness percentage")
+                raise ValueError("Invalid E10 brightness percentage")
             if power is not None:
                 self.devices[serial].is_on = int.from_bytes(power, "little") == 1
             if brightness is not None:
@@ -989,10 +992,10 @@ def _self_check() -> None:
             assert cloud.devices["shared"].is_on is True  # ACK is not a state report.
             cloud._handle_frame("shared", _REPORT_DEVICE_INFO, b"\xa1\x01\x00")
             assert cloud.devices["shared"].is_on is False
-            from .light import EufyLifeOutdoorLight
+            from .light import EufyLifeLight
             from homeassistant.components.light import ColorMode
 
-            light = EufyLifeOutdoorLight(cloud, cloud.devices["shared"])
+            light = EufyLifeLight(cloud, cloud.devices["shared"])
             assert light.supported_color_modes == {ColorMode.RGB}
             cloud._handle_frame("shared", _GET_SETTINGS_RESPONSE, b"\x00\xa2\x01\x32")
             assert light.brightness == 128

@@ -1,4 +1,4 @@
-"""T8L30 lights for EufyLife API."""
+"""E10 lights for EufyLife API."""
 
 from __future__ import annotations
 
@@ -27,16 +27,16 @@ async def async_setup_entry(
     entry: EufyLifeConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up cloud-discovered T8L30 lights."""
+    """Set up cloud-discovered E10 lights."""
     cloud = entry.runtime_data.light_cloud
     if cloud is not None:
         async_add_entities(
-            EufyLifeOutdoorLight(cloud, device) for device in cloud.devices.values()
+            EufyLifeLight(cloud, device) for device in cloud.devices.values()
         )
 
 
-class EufyLifeOutdoorLight(LightEntity):
-    """A Eufy E10/T8L30 outdoor light string."""
+class EufyLifeLight(LightEntity):
+    """A Eufy E10 light string or lamp."""
 
     _attr_has_entity_name = True
     _attr_color_mode = ColorMode.RGB
