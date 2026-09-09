@@ -9,4 +9,39 @@ refresh_data:
       selector:
         entity:
           domain: sensor
-          integration: eufylife_api 
+          integration: eufylife_api
+
+set_light_settings:
+  name: "Set Light Settings"
+  description: "Advanced control for E10 lights including segmented colors, speed and direction."
+  target:
+    entity:
+      domain: light
+      integration: eufylife_api
+  fields:
+    effect:
+      name: "Effect"
+      description: "Name of a preset effect to apply."
+      selector:
+        text:
+    colors:
+      name: "Colors"
+      description: "List of colors for each lamp segment. Use 3-tuple [R,G,B] or 5-tuple [R,G,B,W,C]."
+      selector:
+        object:
+    speed:
+      name: "Speed"
+      description: "Animation speed (1 to 10)."
+      selector:
+        number:
+          min: 1
+          max: 10
+          mode: box
+    direction:
+      name: "Direction"
+      description: "Animation direction (0 or 1)."
+      selector:
+        number:
+          min: 0
+          max: 1
+          mode: box

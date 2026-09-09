@@ -8,6 +8,7 @@ from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_EFFECT,
     ATTR_RGB_COLOR,
+    ATTR_RGBWW_COLOR,
     ColorMode,
     LightEntity,
     LightEntityFeature,
@@ -16,6 +17,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import entity_platform
+import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 
 from .cloud import EufyLifeCloudError, EufyLifeLightCloud, EufyLifeLightDevice
 from .const import DOMAIN
@@ -34,13 +38,25 @@ async def async_setup_entry(
             EufyLifeLight(cloud, device) for device in cloud.devices.values()
         )
 
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        "set_light_settings",
+        {
+            vol.Optional("effect"): cv.string,
+            vol.Optional("colors"): vol.All(cv.ensure_list, [vol.All(cv.ensure_list, [vol.Coerce(int)])]),
+            vol.Optional("speed"): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+            vol.Optional("direction"): vol.All(vol.Coerce(int), vol.Range(min=0, max=1)),
+        },
+        "async_set_light_settings",
+    )
+
 
 class EufyLifeLight(LightEntity):
     """A Eufy E10 light string or lamp."""
 
     _attr_has_entity_name = True
-    _attr_color_mode = ColorMode.RGB
-    _attr_supported_color_modes = {ColorMode.RGB}
+    _attr_color_mode = ColorMode.RGBWW
+    _attr_supported_color_modes = {ColorMode.RGBWW}
     _attr_supported_features = LightEntityFeature.EFFECT
     # Power/brightness are reported; color/effect are last device-acknowledged values.
     _attr_assumed_state = True
@@ -78,6 +94,20 @@ class EufyLifeLight(LightEntity):
         return self._device.rgb_color
 
     @property
+    def rgbww_color(self) -> tuple[int, int, int, int, int] | None:
+        return self._device.rgbww_color
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return device-specific state attributes."""
+        return {
+            "speed": self._device.speed,
+            "direction": self._device.direction,
+            "lamp_count": self._device.lamp_count,
+            "model": self._device.model,
+        }
+
+    @property
     def effect(self) -> str | None:
         return self._device.effect
 
@@ -98,12 +128,13 @@ class EufyLifeLight(LightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Set a device-acknowledged color/preset, then requested power/brightness."""
         brightness = kwargs.get(ATTR_BRIGHTNESS)
-        if ATTR_RGB_COLOR in kwargs or ATTR_EFFECT in kwargs:
+        if ATTR_RGB_COLOR in kwargs or ATTR_RGBWW_COLOR in kwargs or ATTR_EFFECT in kwargs:
             try:
                 await self._cloud.async_set_effect(
                     self._device.serial,
-                    kwargs.get(ATTR_RGB_COLOR),
-                    kwargs.get(ATTR_EFFECT),
+                    rgb_color=kwargs.get(ATTR_RGB_COLOR),
+                    rgbww_color=kwargs.get(ATTR_RGBWW_COLOR),
+                    effect=kwargs.get(ATTR_EFFECT),
                 )
             except EufyLifeCloudError as err:
                 raise HomeAssistantError(str(err)) from err
@@ -114,6 +145,28 @@ class EufyLifeLight(LightEntity):
     async def async_turn_off(self, **_kwargs: Any) -> None:
         """Ask the device to turn off."""
         self._set_power(False)
+
+    async def async_set_light_settings(
+        self,
+        effect: str | None = None,
+        colors: list[list[int]] | None = None,
+        speed: int | None = None,
+        direction: int | None = None,
+    ) -> None:
+        """Advanced control service: set effect, segmented colors, speed, or direction."""
+        try:
+            target_colors = None
+            if colors is not None:
+                target_colors = [tuple(c) for c in colors]
+            await self._cloud.async_set_effect(
+                self._device.serial,
+                effect=effect,
+                colors=target_colors,
+                speed=speed,
+                direction=direction,
+            )
+        except EufyLifeCloudError as err:
+            raise HomeAssistantError(str(err)) from err
 
     def _set_power(self, is_on: bool, brightness: int | None = None) -> None:
         try:

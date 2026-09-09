@@ -26,7 +26,7 @@
 - 👥 **Multi-User**: Supports multiple family members on the same scale
 - 🔄 **Real-time Updates**: Automatic data synchronization with configurable intervals (1 min to 12 hours)
 - ⚙️ **Configurable**: Adjust update frequency after setup without restarting Home Assistante
-- 💡 **E10 Lights**: On/off, brightness, native RGB picker and classic presets for Eufy E10 series (Outdoor Pathway T8L30 and Indoor Floor Lamp T8L40)
+- 💡 **E10 Lights**: On/off, brightness, native RGBWW picker (including warm/cool white LEDs), classic presets and segmented control for Eufy E10 series (Outdoor Pathway T8L30 and Indoor Floor Lamp T8L40)
 
 ## Installation
 
@@ -99,12 +99,13 @@ If you have a light that is not being discovered, you can run a validation scrip
 The script will list all lights found in your account along with their model IDs,
 and provides an interactive menu to test power, brightness, colors and effects.
 
-### E10 light controls (experimental)
+### E10 light controls
 
-Open the light's more-info panel for brightness, the RGB picker and the effect
-selector. Classic presets are discovered from the account's Eufy catalog; the
-tested E10 exposes White, Warm White, Cool White, Welcome1, Alarm1 and Alexa1.
-Existing `light.turn_on`/`light.turn_off` automations keep working.
+Open the light's more-info panel for brightness, the native RGBWW picker (supporting
+R, G, B, Warm White, and Cold White LEDs) and the effect selector. Classic presets
+are discovered from the account's Eufy catalog; the tested E10 exposes White, Warm
+White, Cool White, Welcome1, Alarm1 and Alexa1. Existing `light.turn_on`/`light.turn_off`
+automations keep working.
 
 ```yaml
 action: light.turn_on
@@ -112,16 +113,38 @@ target:
   entity_id: light.eufy_e10_light
 data:
   brightness_pct: 50
-  rgb_color: [255, 128, 0]
+  rgbww_color: [255, 128, 0, 255, 0]
 ```
 
-Replace `rgb_color` with `effect: Warm White` to select a preset. Select a color
+Replace `rgbww_color` with `effect: Warm White` to select a preset. Select a color
 or a preset, not both. Brightness is retained unless supplied in the action.
-Colors use native RGB channels, with the warm/cool-white channels disabled;
-these are not app-calibrated RGBWC colors. Power/brightness come from device
-reports; color/effect are remembered only after a successful device ACK and
-are marked assumed in HA. The palette cannot yet be read back, including
-after restarting HA or changing colors in the app without changing modes.
+Power/brightness come from device reports; color/effect are remembered only
+after a successful device ACK and are marked assumed in HA. The palette cannot
+yet be read back, including after restarting HA or changing colors in the app
+without changing modes.
+
+### Advanced Controls (Segmented DIY Mode)
+
+For more advanced control, such as setting different colors for each lamp segment,
+adjusting animation speed or direction, use the `eufylife_api.set_light_settings` service:
+
+```yaml
+action: eufylife_api.set_light_settings
+target:
+  entity_id: light.eufy_e10_light
+data:
+  colors:
+    - [255, 0, 0]      # Segment 1: Red
+    - [0, 255, 0]      # Segment 2: Green
+    - [0, 0, 255]      # Segment 3: Blue
+    - [255, 255, 0, 255, 0] # Segment 4: Yellow + Warm White
+  speed: 5             # 1 (slow) to 10 (fast)
+  direction: 1         # 0 or 1
+```
+
+The `colors` list must have exactly as many entries as there are segments in your
+light (check the `lamp_count` attribute of the entity). Each entry can be a
+3-tuple `[R, G, B]` or a 5-tuple `[R, G, B, W, C]`.
 
 ## Sensors
 
@@ -155,8 +178,7 @@ This integration uses the official EufyLife API endpoints:
 ## Limitations
 
 - Requires active internet connection for cloud API access
-- E10 newer-format animated/AI presets, per-lamp editing and app-identical white
-  calibration are not implemented; unsupported catalog entries are hidden
+- E10 newer-format animated/AI presets are not implemented; unsupported catalog entries are hidden
 - data are avaialbe after open the app in your phone
 - Token expires after 30 days (automatic re-authentication planned for future versions)
 - Historical data is limited to what's available via the current API endpoints

@@ -116,8 +116,9 @@ async def validate():
                 print(f"\n--- Controlling: {device.name} ---")
                 print("1. Toggle Power")
                 print("2. Set Brightness (0-100)")
-                print("3. Set RGB Color")
-                print("4. Set Effect (Preset)")
+                print("3. Set RGB/RGBWW Color")
+                print("4. Set Effect (Preset, Speed, Direction)")
+                print("5. Set Segmented Colors (DIY)")
                 print("b. Back to main menu")
                 
                 action = input("\nAction: ").strip().lower()
@@ -140,12 +141,16 @@ async def validate():
                         if not device.lamp_count:
                             print("Error: Lamp segment count unknown yet. Try refreshing or toggling power first.")
                             continue
-                        val = input("Enter RGB (e.g., 255,128,0): ")
-                        rgb = tuple(map(int, val.split(',')))
-                        if len(rgb) != 3:
-                            raise ValueError("Need 3 comma-separated values (0-255)")
-                        print(f"Setting color to RGB{rgb}...")
-                        await cloud.async_set_effect(device.serial, rgb_color=rgb)
+                        print("Enter RGB (3 values) or RGBWW (5 values) separated by commas.")
+                        val = input("Enter values (e.g., 255,128,0 or 255,0,0,255,0): ")
+                        color = tuple(map(int, val.split(',')))
+                        if len(color) not in (3, 5):
+                            raise ValueError("Need 3 or 5 comma-separated values (0-255)")
+                        print(f"Setting color to {color}...")
+                        if len(color) == 3:
+                            await cloud.async_set_effect(device.serial, rgb_color=color)
+                        else:
+                            await cloud.async_set_effect(device.serial, rgbww_color=color)
                         print("Success!")
                     elif action == '4':
                         if not device.effects:
@@ -158,8 +163,27 @@ async def validate():
                         e_choice = input("\nSelect preset number: ")
                         e_idx = int(e_choice) - 1
                         effect_name = effect_list[e_idx]
+                        
+                        speed_val = input("Enter speed (1-10, leave empty for default): ")
+                        speed = int(speed_val) if speed_val.strip() else None
+                        
+                        dir_val = input("Enter direction (0-1, leave empty for default): ")
+                        direction = int(dir_val) if dir_val.strip() else None
+                        
                         print(f"Setting preset: {effect_name}...")
-                        await cloud.async_set_effect(device.serial, effect=effect_name)
+                        await cloud.async_set_effect(device.serial, effect=effect_name, speed=speed, direction=direction)
+                        print("Success!")
+                    elif action == '5':
+                        if not device.lamp_count:
+                            print("Error: Lamp count unknown.")
+                            continue
+                        print(f"Enter {device.lamp_count} colors. Use R,G,B or R,G,B,W,C for each.")
+                        colors = []
+                        for i in range(device.lamp_count):
+                            val = input(f"Segment {i+1}: ")
+                            color = tuple(map(int, val.split(',')))
+                            colors.append(color)
+                        await cloud.async_set_effect(device.serial, colors=colors)
                         print("Success!")
                     else:
                         print("Invalid action.")

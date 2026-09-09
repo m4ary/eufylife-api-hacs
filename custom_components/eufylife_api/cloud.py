@@ -75,7 +75,10 @@ class EufyLifeLightDevice:
     lamp_count: int | None = None
     light_id: int | None = None
     rgb_color: tuple[int, int, int] | None = None
+    rgbww_color: tuple[int, int, int, int, int] | None = None
     effect: str | None = None
+    speed: int | None = None
+    direction: int | None = None
     effects: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
@@ -309,31 +312,37 @@ def _command_payload(user_id: str, value: bytes) -> bytes:
 
 def _effect_payload(
     light_id: int,
-    colors: list[tuple[int, int, int]],
+    colors: list[tuple[int, ...]],
     direction: int,
     speed: int,
     cloud_id: int | None,
     update_method: int = 0,
 ) -> bytes:
-    """LightTransportNewCmd (0xa7cd78), using native RGB channels."""
+    """LightTransportNewCmd (0xa7cd78), using native RGBWC channels."""
     if not 0 <= light_id <= 65535 or not 0 <= direction <= 65535:
         raise EufyLifeCloudError("Invalid light effect ID or direction")
     if not 1 <= speed <= 10 or not colors:
         raise EufyLifeCloudError("Invalid light effect speed or empty palette")
     for color in colors:
-        if len(color) != 3 or any(
+        if len(color) not in (3, 5) or any(
             type(c) is not int or not 0 <= c <= 255 for c in color
         ):
-            raise EufyLifeCloudError("RGB channels must be integers between 0 and 255")
+            raise EufyLifeCloudError("Color channels must be integers between 0 and 255 (3 or 5 channels)")
     indices = b""
     if 20000 <= light_id < 30000:
-        grouped: dict[tuple[int, int, int], list[int]] = {}
+        grouped: dict[tuple[int, ...], list[int]] = {}
         for index, color in enumerate(colors):
             grouped.setdefault(color, []).append(index)
         indices = b"".join(bytes([len(slots), *slots]) for slots in grouped.values())
         colors = list(grouped)
-    # ponytail: direct RGB, W/C zero; port model/firmware calibration for app-identical whites.
-    palette = bytes([len(colors)]) + b"".join(bytes((*color, 0, 0)) for color in colors)
+    # palette: direct RGBWC entries; port model/firmware calibration for app-identical whites.
+    palette_data = []
+    for color in colors:
+        if len(color) == 3:
+            palette_data.extend((*color, 0, 0))
+        else:
+            palette_data.extend(color)
+    palette = bytes([len(colors)]) + bytes(palette_data)
     value = (
         _tlv(0xA3, light_id.to_bytes(2, "little"))
         + _tlv(0xA4, direction.to_bytes(2, "little"))
@@ -761,31 +770,60 @@ class EufyLifeLightCloud:
         self,
         serial: str,
         rgb_color: tuple[int, int, int] | None = None,
+        rgbww_color: tuple[int, int, int, int, int] | None = None,
         effect: str | None = None,
+        colors: list[tuple[int, ...]] | None = None,
+        speed: int | None = None,
+        direction: int | None = None,
     ) -> None:
         """Wait for the device result before remembering the selected palette."""
         device = self.devices[serial]
-        if rgb_color is not None and effect is not None:
+        if (rgb_color is not None or rgbww_color is not None) and effect is not None:
             raise EufyLifeCloudError("Choose either a color or a preset")
+        
+        # Determine parameters
+        target_speed = speed if speed is not None else 1
+        target_direction = direction if direction is not None else 0
+        target_cloud_id = None
+        
         if effect is not None:
             if effect not in device.effects:
                 raise EufyLifeCloudError(f"Unsupported light preset: {effect}")
             p = device.effects[effect]
             light_id = p["dynamic"]
+            target_cloud_id = p["light_id"]
+            target_colors = p["colors"]
+            if speed is None:
+                target_speed = p["speed"]
+            if direction is None:
+                target_direction = p["direction"]
             value = _effect_payload(
-                light_id, p["colors"], p["direction"], p["speed"], p["light_id"]
+                light_id, target_colors, target_direction, target_speed, target_cloud_id
+            )
+        elif colors is not None:
+            if not device.lamp_count:
+                 raise EufyLifeCloudError("Waiting for the light's lamp count")
+            if len(colors) != device.lamp_count:
+                raise EufyLifeCloudError(f"Effect requires exactly {device.lamp_count} colors")
+            light_id = 20006
+            value = _effect_payload(
+                light_id, colors, target_direction, target_speed, None, 7
             )
         else:
-            # H5HouseDiyUtils default at 0x8e6a50; all reported lamps get this color.
-            if rgb_color is None or not device.lamp_count:
+            # Single color for all segments
+            if rgb_color is None and rgbww_color is None:
+                 raise EufyLifeCloudError("Provide a color, effect, or color list")
+            if not device.lamp_count:
                 raise EufyLifeCloudError("Waiting for the light's lamp count")
             light_id = 20006
+            color = rgbww_color if rgbww_color is not None else rgb_color
             try:
                 value = _effect_payload(
-                    light_id, [tuple(rgb_color)] * device.lamp_count, 0, 1, None, 7
+                    light_id, [tuple(color)] * device.lamp_count, target_direction, target_speed, None, 7
                 )
             except (TypeError, ValueError) as err:
-                raise EufyLifeCloudError("Invalid RGB color or lamp count") from err
+                raise EufyLifeCloudError("Invalid color or lamp count") from err
+        
         async with self._effect_locks[serial]:
             future = self._loop.create_future()
             self._effect_replies[serial] = future
@@ -801,11 +839,14 @@ class EufyLifeLightCloud:
                 ) from err
             finally:
                 self._effect_replies.pop(serial, None)
-            # ponytail: ACK-backed selection, not palette readback; same-mode app edits
-            # cannot be detected until a palette-query protocol is recovered.
+            
+            # ponytail: ACK-backed selection, not palette readback
             device.light_id = light_id
             device.rgb_color = tuple(rgb_color) if rgb_color is not None else None
+            device.rgbww_color = tuple(rgbww_color) if rgbww_color is not None else None
             device.effect = effect
+            device.speed = target_speed
+            device.direction = target_direction
             self.request_settings(serial)
             self._notify(serial)
 
