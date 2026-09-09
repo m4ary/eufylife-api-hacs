@@ -7,9 +7,11 @@
         "data": {
           "email": "Email",
           "password": "Password",
+          "country": "Country",
           "update_interval": "Update Interval"
         },
         "data_description": {
+          "country": "The country where your EufyLife account was created. This determines which regional API server is used.",
           "update_interval": "How often to check for new weight data"
         }
       },
@@ -18,7 +20,8 @@
         "description": "Your credentials need to be updated. Please re-enter your login information.",
         "data": {
           "email": "Email",
-          "password": "Password"
+          "password": "Password",
+          "country": "Country"
         }
       }
     },
@@ -78,6 +81,16 @@
       },
       "bmi": {
         "name": "BMI"
+      }
+    },
+    "number": {
+      "effect_speed": {
+        "name": "Effect Speed"
+      }
+    },
+    "select": {
+      "effect_direction": {
+        "name": "Effect Direction"
       }
     }
   }

@@ -49,6 +49,10 @@ _SET_POWER_RESPONSE = (0x0A, 0x01)
 _REPORT_DEVICE_INFO = (0x02, 0x04)
 _SET_EFFECT = (0x02, 0x06)
 _SET_EFFECT_RESPONSE = (0x0A, 0x06)
+_SET_LIGHT_SHOW = (0x02, 0x10)
+_SET_LIGHT_SHOW_RESPONSE = (0x0A, 0x10)
+_SET_LIGHT_AI = (0x02, 0x11)
+_SET_LIGHT_AI_RESPONSE = (0x0A, 0x11)
 # App CmdHandler default at 0x5f0858; LightTransportNewCmd uses that default.
 _EFFECT_RESPONSE_TIMEOUT = 5
 
@@ -79,6 +83,7 @@ class EufyLifeLightDevice:
     effect: str | None = None
     speed: int | None = None
     direction: int | None = None
+    colors: list[tuple[int, ...]] | None = None
     effects: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
@@ -288,6 +293,11 @@ def _tlv(tag: int, value: bytes) -> bytes:
     return bytes((tag, len(value))) + value
 
 
+def _tlv_long(tag: int, value: bytes) -> bytes:
+    """TLV with 2-byte little-endian length."""
+    return bytes([tag]) + len(value).to_bytes(2, "little") + value
+
+
 def _frame(opcode: tuple[int, int], payload: bytes) -> bytes:
     frame = bytearray((0xFF, 0x09))
     frame.extend((len(payload) + 10).to_bytes(2, "little"))
@@ -377,9 +387,16 @@ def _parse_effects(data: Any) -> dict[str, dict[str, Any]]:
                 try:
                     if not isinstance(preset, dict):
                         continue
-                    if int(preset.get("params_version") or 0) > 0:
-                        continue  # New LightShowCmd needs a different serializer.
-                    name = preset["name"]
+                    name = preset.get("name", "Unknown")
+                    params_version = int(preset.get("params_version") or 0)
+                    if params_version > 0:
+                        params = {
+                            "params_version": params_version,
+                            "params": preset.get("params"),
+                            "light_id": int(preset.get("light_id") or 0),
+                        }
+                        result[name] = params
+                        continue
                     palette = preset["rgb_hex"]
                     if (
                         not isinstance(name, str)
@@ -702,7 +719,7 @@ class EufyLifeLightCloud:
     def _handle_frame(
         self, serial: str, opcode: tuple[int, int], payload: bytes
     ) -> None:
-        if opcode == _SET_EFFECT_RESPONSE:
+        if opcode in (_SET_EFFECT_RESPONSE, _SET_LIGHT_SHOW_RESPONSE, _SET_LIGHT_AI_RESPONSE):
             # Captured 00 a1 01 00: envelope success plus command result TLV A1.
             if not payload:
                 raise ValueError("Effect response is missing status")
@@ -775,6 +792,8 @@ class EufyLifeLightCloud:
         colors: list[tuple[int, ...]] | None = None,
         speed: int | None = None,
         direction: int | None = None,
+        params: str | None = None,
+        use_ai_opcode: bool = False,
     ) -> None:
         """Wait for the device result before remembering the selected palette."""
         device = self.devices[serial]
@@ -785,29 +804,63 @@ class EufyLifeLightCloud:
         target_speed = speed if speed is not None else 1
         target_direction = direction if direction is not None else 0
         target_cloud_id = None
+        target_colors = None
+        target_params = params
         
         if effect is not None:
             if effect not in device.effects:
                 raise EufyLifeCloudError(f"Unsupported light preset: {effect}")
             p = device.effects[effect]
-            light_id = p["dynamic"]
-            target_cloud_id = p["light_id"]
-            target_colors = p["colors"]
-            if speed is None:
-                target_speed = p["speed"]
-            if direction is None:
-                target_direction = p["direction"]
-            value = _effect_payload(
-                light_id, target_colors, target_direction, target_speed, target_cloud_id
+            if "params" in p:
+                opcode = _SET_LIGHT_AI if use_ai_opcode else _SET_LIGHT_SHOW
+                light_id = 0
+                target_cloud_id = p["light_id"]
+                target_params = p["params"]
+                # New format uses tag A3 (ID) and A4 (JSON) with 2-byte length headers
+                # We also include standard tags A8-B0 for compatibility
+                value = (
+                    _tlv_long(0xA3, target_cloud_id.to_bytes(2, "little"))
+                    + _tlv_long(0xA4, target_params.encode())
+                    + _tlv(0xA8, b"\x64")
+                    + _tlv(0xA9, bytes(5))
+                    + _tlv(0xAA, b"\x00")
+                    + _tlv(0xAE, b"\x00")
+                    + _tlv(0xB0, b"\x00")
+                )
+            else:
+                opcode = _SET_EFFECT
+                light_id = p["dynamic"]
+                target_cloud_id = p["light_id"]
+                target_colors = p["colors"]
+                if speed is None:
+                    target_speed = p["speed"]
+                if direction is None:
+                    target_direction = p["direction"]
+                value = _effect_payload(
+                    light_id, target_colors, target_direction, target_speed, target_cloud_id
+                )
+        elif target_params is not None:
+            # Custom JSON animation
+            opcode = _SET_LIGHT_AI if use_ai_opcode else _SET_LIGHT_SHOW
+            light_id = 0
+            value = (
+                _tlv_long(0xA4, target_params.encode())
+                + _tlv(0xA8, b"\x64")
+                + _tlv(0xA9, bytes(5))
+                + _tlv(0xAA, b"\x00")
+                + _tlv(0xAE, b"\x00")
+                + _tlv(0xB0, b"\x00")
             )
         elif colors is not None:
+            opcode = _SET_EFFECT
             if not device.lamp_count:
                  raise EufyLifeCloudError("Waiting for the light's lamp count")
             if len(colors) != device.lamp_count:
                 raise EufyLifeCloudError(f"Effect requires exactly {device.lamp_count} colors")
             light_id = 20006
+            target_colors = colors
             value = _effect_payload(
-                light_id, colors, target_direction, target_speed, None, 7
+                light_id, target_colors, target_direction, target_speed, None, 7
             )
         else:
             # Single color for all segments
@@ -815,11 +868,13 @@ class EufyLifeLightCloud:
                  raise EufyLifeCloudError("Provide a color, effect, or color list")
             if not device.lamp_count:
                 raise EufyLifeCloudError("Waiting for the light's lamp count")
+            opcode = _SET_EFFECT
             light_id = 20006
             color = rgbww_color if rgbww_color is not None else rgb_color
             try:
+                target_colors = [tuple(color)] * device.lamp_count
                 value = _effect_payload(
-                    light_id, [tuple(color)] * device.lamp_count, target_direction, target_speed, None, 7
+                    light_id, target_colors, target_direction, target_speed, None, 7
                 )
             except (TypeError, ValueError) as err:
                 raise EufyLifeCloudError("Invalid color or lamp count") from err
@@ -829,11 +884,10 @@ class EufyLifeLightCloud:
             self._effect_replies[serial] = future
             try:
                 self._publish(
-                    serial, _SET_EFFECT, _command_payload(self._user_id, value)
+                    serial, opcode, _command_payload(self._user_id, value)
                 )
-                async with asyncio.timeout(_EFFECT_RESPONSE_TIMEOUT):
-                    await future
-            except TimeoutError as err:
+                await asyncio.wait_for(future, timeout=_EFFECT_RESPONSE_TIMEOUT)
+            except asyncio.TimeoutError as err:
                 raise EufyLifeCloudError(
                     "Light did not acknowledge the color/preset"
                 ) from err
@@ -841,12 +895,13 @@ class EufyLifeLightCloud:
                 self._effect_replies.pop(serial, None)
             
             # ponytail: ACK-backed selection, not palette readback
-            device.light_id = light_id
+            device.light_id = light_id if light_id else target_cloud_id
             device.rgb_color = tuple(rgb_color) if rgb_color is not None else None
             device.rgbww_color = tuple(rgbww_color) if rgbww_color is not None else None
             device.effect = effect
             device.speed = target_speed
             device.direction = target_direction
+            device.colors = target_colors
             self.request_settings(serial)
             self._notify(serial)
 

@@ -98,6 +98,8 @@ If you have a light that is not being discovered, you can run a validation scrip
 
 The script will list all lights found in your account along with their model IDs,
 and provides an interactive menu to test power, brightness, colors and effects.
+Use the `d` option in the control menu to dump the raw effects catalog for
+troubleshooting skipped presets.
 
 ### E10 light controls
 

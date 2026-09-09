@@ -18,9 +18,11 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import CountrySelector
 
 from .cloud import EufyLifeAuthError, async_login
 from .const import (
+    CONF_COUNTRY,
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
@@ -28,16 +30,6 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_EMAIL): str,
-        vol.Required(CONF_PASSWORD): str,
-        vol.Optional(CONF_UPDATE_INTERVAL, default="5 minutes"): vol.In(
-            UPDATE_INTERVAL_OPTIONS.keys()
-        ),
-    }
-)
 
 
 class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -64,12 +56,13 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             email = user_input[CONF_EMAIL]
             password = user_input[CONF_PASSWORD]
+            country = user_input[CONF_COUNTRY]
             update_interval_key = user_input[CONF_UPDATE_INTERVAL]
             update_interval = UPDATE_INTERVAL_OPTIONS[update_interval_key]
 
             # Test the connection
             try:
-                auth_data = await self._test_connection(email, password)
+                auth_data = await self._test_connection(email, password, country)
                 if auth_data:
                     # Set unique ID based on user ID
                     await self.async_set_unique_id(auth_data["user_id"])
@@ -81,6 +74,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                         data={
                             CONF_EMAIL: email,
                             CONF_PASSWORD: password,
+                            CONF_COUNTRY: country,
                             CONF_UPDATE_INTERVAL: update_interval,
                             "user_id": auth_data["user_id"],
                             "access_token": auth_data["access_token"],
@@ -104,7 +98,30 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_EMAIL,
+                        default=(user_input or {}).get(CONF_EMAIL, ""),
+                    ): str,
+                    vol.Required(
+                        CONF_PASSWORD,
+                        default=(user_input or {}).get(CONF_PASSWORD, ""),
+                    ): str,
+                    vol.Required(
+                        CONF_COUNTRY,
+                        default=(user_input or {}).get(
+                            CONF_COUNTRY, self.hass.config.country or "US"
+                        ),
+                    ): CountrySelector(),
+                    vol.Optional(
+                        CONF_UPDATE_INTERVAL,
+                        default=(user_input or {}).get(
+                            CONF_UPDATE_INTERVAL, "5 minutes"
+                        ),
+                    ): vol.In(UPDATE_INTERVAL_OPTIONS.keys()),
+                }
+            ),
             errors=errors,
         )
 
@@ -128,15 +145,22 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_EMAIL, default=self._reauth_entry.data[CONF_EMAIL]
                         ): str,
                         vol.Required(CONF_PASSWORD): str,
+                        vol.Required(
+                            CONF_COUNTRY,
+                            default=self._reauth_entry.data.get(
+                                CONF_COUNTRY, self.hass.config.country or "US"
+                            ),
+                        ): CountrySelector(),
                     }
                 ),
             )
 
         email = user_input[CONF_EMAIL]
         password = user_input[CONF_PASSWORD]
+        country = user_input[CONF_COUNTRY]
 
         try:
-            auth_data = await self._test_connection(email, password)
+            auth_data = await self._test_connection(email, password, country)
             if auth_data:
                 # Update the existing entry with new credentials
                 self.hass.config_entries.async_update_entry(
@@ -145,6 +169,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                         **self._reauth_entry.data,
                         CONF_EMAIL: email,
                         CONF_PASSWORD: password,
+                        CONF_COUNTRY: country,
                         "user_id": auth_data["user_id"],
                         "access_token": auth_data["access_token"],
                         "user_center_id": auth_data.get("user_center_id"),
@@ -161,6 +186,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                         {
                             vol.Required(CONF_EMAIL, default=email): str,
                             vol.Required(CONF_PASSWORD): str,
+                            vol.Required(CONF_COUNTRY, default=country): CountrySelector(),
                         }
                     ),
                     errors={"base": "invalid_auth"},
@@ -172,6 +198,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_EMAIL, default=email): str,
                         vol.Required(CONF_PASSWORD): str,
+                        vol.Required(CONF_COUNTRY, default=country): CountrySelector(),
                     }
                 ),
                 errors={"base": "invalid_auth"},
@@ -183,6 +210,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_EMAIL, default=email): str,
                         vol.Required(CONF_PASSWORD): str,
+                        vol.Required(CONF_COUNTRY, default=country): CountrySelector(),
                     }
                 ),
                 errors={"base": "cannot_connect"},
@@ -195,13 +223,14 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_EMAIL, default=email): str,
                         vol.Required(CONF_PASSWORD): str,
+                        vol.Required(CONF_COUNTRY, default=country): CountrySelector(),
                     }
                 ),
                 errors={"base": "unknown"},
             )
 
     async def _test_connection(
-        self, email: str, password: str
+        self, email: str, password: str, country: str
     ) -> dict[str, Any] | None:
         """Test if we can authenticate with the given credentials."""
         session = async_get_clientsession(self.hass)
@@ -209,7 +238,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
             session,
             email,
             password,
-            self.hass.config.country or "US",
+            country,
         )
 
 

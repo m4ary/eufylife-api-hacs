@@ -23,6 +23,7 @@ from .cloud import (
     async_login,
 )
 from .const import (
+    CONF_COUNTRY,
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
@@ -31,7 +32,7 @@ from .models import EufyLifeData
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.LIGHT]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.LIGHT, Platform.NUMBER, Platform.SELECT]
 
 
 async def async_refresh_token(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -47,7 +48,7 @@ async def async_refresh_token(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             session,
             entry.data[CONF_EMAIL],
             entry.data[CONF_PASSWORD],
-            hass.config.country or "US",
+            entry.data.get(CONF_COUNTRY, hass.config.country or "US"),
         )
         hass.config_entries.async_update_entry(
             entry,
@@ -138,7 +139,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             center_id,
             center_token,
             openudid,
-            hass.config.country or "US",
+            entry.data.get(CONF_COUNTRY, hass.config.country or "US"),
             hass.config.language or "en",
             hass.config.time_zone,
         )
