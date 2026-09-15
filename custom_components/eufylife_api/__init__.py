@@ -156,18 +156,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_update_listener))
 
-    # Register developer service
+    # Register service for manual data refresh (e.g. from automations)
     async def handle_refresh_data(call: ServiceCall) -> None:
         """Handle the refresh_data service call."""
         _LOGGER.info("Manual data refresh service called")
-        sensor_platforms = hass.data.get("entity_platform", {}).get("sensor", [])
-        for platform in sensor_platforms:
-            if platform.domain == DOMAIN and hasattr(platform, "entities"):
-                for entity in platform.entities:
-                    if hasattr(entity, "coordinator"):
-                        await entity.coordinator.async_request_refresh()
-                        break
-                break
+        coordinators = hass.data.get(DOMAIN, {})
+        for entry_id, coordinator in coordinators.items():
+            _LOGGER.debug("Refreshing coordinator for entry %s", entry_id)
+            await coordinator.async_request_refresh()
 
     if not hass.services.has_service(DOMAIN, "refresh_data"):
         hass.services.async_register(
@@ -187,6 +183,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("Unloading EufyLife API integration (entry_id: %s)", entry.entry_id)
     success = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if success:
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         _LOGGER.info("EufyLife API integration unloaded successfully")
     else:
         _LOGGER.error("Failed to unload EufyLife API integration")

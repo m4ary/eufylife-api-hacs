@@ -195,7 +195,11 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                             last_update.strftime("%Y-%m-%d %H:%M:%S"),
                         )
 
-            return processed_device_data
+                # Merge new data into existing data so users without a new measurement
+                # since _last_device_timestamp don't lose their previous values.
+                merged_data = dict(self.data) if self.data else {}
+                merged_data.update(processed_device_data)
+                return merged_data
         else:
             # No new data available — preserve existing data to avoid "unknown" sensor state
             if self.data:
@@ -569,6 +573,9 @@ async def async_setup_entry(
 
     _LOGGER.info("Performing initial data refresh...")
     await coordinator.async_config_entry_first_refresh()
+
+    # Store coordinator for service access
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     entities = []
     customer_ids = entry.runtime_data.customer_ids
