@@ -15,6 +15,9 @@ LIGHT_API_BASE_URL = "https://aiot-light-api-pr.eufylife.com"
 CLIENT_ID = "eufy-app"
 CLIENT_SECRET = "8FHf22gaTKu7MZXqz5zytw"
 
+# Country the integration authenticated with before it stored one per entry.
+DEFAULT_COUNTRY = "US"
+
 # User-Agent version - update if EufyLife releases newer app versions
 USER_AGENT_VERSION = "3.3.12"
 

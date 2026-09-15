@@ -7,6 +7,6 @@
   "issue_tracker": "https://github.com/m4ary/eufylife-api-hacs/issues",
   "integration_type": "device",
   "iot_class": "cloud_polling",
-  "requirements": ["requests>=2.25.0", "paho-mqtt==2.1.0"],
+  "requirements": ["requests>=2.25.0", "paho-mqtt>=2.1.0"],
   "version": "2.2.0"
 }

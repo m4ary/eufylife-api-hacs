@@ -22,10 +22,12 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .cloud import EufyLifeAuthError, async_login
 from .const import (
     CONF_UPDATE_INTERVAL,
+    DEFAULT_COUNTRY,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     UPDATE_INTERVAL_OPTIONS,
 )
+from .models import entry_country
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,10 +68,11 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
             password = user_input[CONF_PASSWORD]
             update_interval_key = user_input[CONF_UPDATE_INTERVAL]
             update_interval = UPDATE_INTERVAL_OPTIONS[update_interval_key]
+            country = self.hass.config.country or DEFAULT_COUNTRY
 
             # Test the connection
             try:
-                auth_data = await self._test_connection(email, password)
+                auth_data = await self._test_connection(email, password, country)
                 if auth_data:
                     # Set unique ID based on user ID
                     await self.async_set_unique_id(auth_data["user_id"])
@@ -82,6 +85,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_EMAIL: email,
                             CONF_PASSWORD: password,
                             CONF_UPDATE_INTERVAL: update_interval,
+                            "country": country,
                             "user_id": auth_data["user_id"],
                             "access_token": auth_data["access_token"],
                             "user_center_id": auth_data.get("user_center_id"),
@@ -136,7 +140,9 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
         password = user_input[CONF_PASSWORD]
 
         try:
-            auth_data = await self._test_connection(email, password)
+            auth_data = await self._test_connection(
+                email, password, entry_country(self._reauth_entry.data)
+            )
             if auth_data:
                 # Update the existing entry with new credentials
                 self.hass.config_entries.async_update_entry(
@@ -201,16 +207,11 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
             )
 
     async def _test_connection(
-        self, email: str, password: str
+        self, email: str, password: str, country: str
     ) -> dict[str, Any] | None:
         """Test if we can authenticate with the given credentials."""
         session = async_get_clientsession(self.hass)
-        return await async_login(
-            session,
-            email,
-            password,
-            self.hass.config.country or "US",
-        )
+        return await async_login(session, email, password, country)
 
 
 class EufyLifeAPIOptionsFlow(OptionsFlow):

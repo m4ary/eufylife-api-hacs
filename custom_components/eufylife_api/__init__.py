@@ -27,7 +27,7 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
 )
-from .models import EufyLifeData
+from .models import EufyLifeData, entry_country
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ async def async_refresh_token(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             session,
             entry.data[CONF_EMAIL],
             entry.data[CONF_PASSWORD],
-            hass.config.country or "US",
+            entry_country(entry.data),
         )
         hass.config_entries.async_update_entry(
             entry,
@@ -90,13 +90,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         isinstance(entry.data.get(key), str) and entry.data[key]
         for key in ("user_center_id", "user_center_token")
     )
-    if time_until_expiry <= 300 or missing_light_tokens:  # Existing project buffer.
+    token_expired = time_until_expiry <= 300  # Existing project buffer.
+    if token_expired or missing_light_tokens:
         _LOGGER.warning(
             "Account tokens need refresh (expiry in %.1f min), re-authenticating...",
             time_until_expiry / 60,
         )
         refreshed = await async_refresh_token(hass, entry)
-        if not refreshed:
+        if not refreshed and token_expired:
             _LOGGER.error(
                 "Silent token refresh failed — credentials may have changed. "
                 "Triggering reauth UI."
@@ -104,6 +105,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.async_start_reauth(hass)
             raise ConfigEntryNotReady(
                 "Token expired and silent refresh failed — please re-authenticate"
+            )
+        if not refreshed:
+            # The stored token still works; only the light tokens are missing, so
+            # keep the scale running instead of sending the user through reauth.
+            _LOGGER.warning(
+                "Could not obtain light cloud tokens; scale sensors continue to "
+                "work and lights stay unavailable until the next reload"
             )
     else:
         _LOGGER.info("Token is valid for %.1f more minutes", time_until_expiry / 60)
@@ -138,7 +146,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             center_id,
             center_token,
             openudid,
-            hass.config.country or "US",
+            entry_country(entry.data),
             hass.config.language or "en",
             hass.config.time_zone,
         )
@@ -152,8 +160,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ValueError,
         ) as err:
             await light_cloud.async_close()
-            raise ConfigEntryNotReady(f"Eufy light cloud setup failed: {err}") from err
-        entry.runtime_data.light_cloud = light_cloud
+            if not customer_ids:
+                # Nothing else to serve, so let HA retry the whole entry later.
+                raise ConfigEntryNotReady(
+                    f"Eufy light cloud setup failed: {err}"
+                ) from err
+            _LOGGER.warning(
+                "Eufy light cloud setup failed, continuing with scale sensors "
+                "only; lights return after a reload: %s",
+                err,
+            )
+        else:
+            entry.runtime_data.light_cloud = light_cloud
 
     update_interval = entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
     _LOGGER.info(
