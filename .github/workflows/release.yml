@@ -42,8 +42,10 @@ jobs:
         if: steps.tag_check.outputs.exists == 'false'
         id: changelog
         run: |
-          # Get the latest tag
-          LATEST_TAG=$(git tag --sort=-version:refname | head -n 1)
+          # Get the latest stable tag. Pre-release tags sort above their own
+          # stable tag (v2.3.0-beta1 > v2.3.0), so including them would cut the
+          # changelog off at the beta and drop everything released with it.
+          LATEST_TAG=$(git tag --sort=-version:refname | grep -vE '\-(alpha|beta|rc)' | head -n 1)
           
           # If no previous tag exists, use initial commit
           if [ -z "$LATEST_TAG" ]; then
@@ -90,4 +92,4 @@ jobs:
             2. Extract the files to your `custom_components/eufylife_api/` directory
             3. Restart Home Assistant
           draft: false
-          prerelease: false 
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }} 
