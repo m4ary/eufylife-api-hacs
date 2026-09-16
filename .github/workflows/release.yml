@@ -38,23 +38,6 @@ jobs:
             echo "::notice::Tag v${{ steps.version.outputs.version }} does not exist - proceeding with release"
           fi
 
-      - name: Update manifest.json version
-        if: steps.tag_check.outputs.exists == 'false'
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" custom_components/eufylife_api/manifest.json
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add custom_components/eufylife_api/manifest.json
-          git commit -m "Update manifest.json version to $VERSION" || exit 0
-
-      - name: Push changes
-        if: steps.tag_check.outputs.exists == 'false'
-        uses: ad-m/github-push-action@master
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: main
-
       - name: Generate changelog
         if: steps.tag_check.outputs.exists == 'false'
         id: changelog

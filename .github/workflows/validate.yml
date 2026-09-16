@@ -7,13 +7,19 @@ on:
     - cron: "0 0 * * *"
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   validate-hacs:
     runs-on: "ubuntu-latest"
     steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
       - name: HACS validation
         uses: "hacs/action@main"
         with:
-          category: "integration" 
+          category: "integration"
+          # eufylife_api is not registered in home-assistant/brands.
+          ignore: "brands"
