@@ -6,6 +6,7 @@ DOMAIN = "eufylife_api"
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_UPDATE_INTERVAL = "update_interval"
+CONF_COUNTRY = "country"
 CONF_DATA_LOOKBACK_DAYS = "data_lookback_days"
 
 # API constants

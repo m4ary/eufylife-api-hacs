@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .const import DEFAULT_COUNTRY
+from .const import CONF_COUNTRY, DEFAULT_COUNTRY
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -21,7 +21,7 @@ def entry_country(data: Mapping[str, Any]) -> str:
     the "US" the integration always sent, so upgrading cannot change the region
     their account resolves to. Newer entries store the HA country at setup time.
     """
-    country = data.get("country")
+    country = data.get(CONF_COUNTRY)
     if isinstance(country, str) and country:
         return country
     return DEFAULT_COUNTRY
@@ -43,4 +43,4 @@ class EufyLifeData:
     light_cloud: EufyLifeLightCloud | None = None
 
 
-type EufyLifeConfigEntry = ConfigEntry[EufyLifeData]
+EufyLifeConfigEntry = "ConfigEntry[EufyLifeData]"

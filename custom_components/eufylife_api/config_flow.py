@@ -18,9 +18,11 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import TextSelector
 
 from .cloud import EufyLifeAuthError, async_login
 from .const import (
+    CONF_COUNTRY,
     CONF_UPDATE_INTERVAL,
     DEFAULT_COUNTRY,
     DEFAULT_UPDATE_INTERVAL,
@@ -30,16 +32,6 @@ from .const import (
 from .models import entry_country
 
 _LOGGER = logging.getLogger(__name__)
-
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_EMAIL): str,
-        vol.Required(CONF_PASSWORD): str,
-        vol.Optional(CONF_UPDATE_INTERVAL, default="5 minutes"): vol.In(
-            UPDATE_INTERVAL_OPTIONS.keys()
-        ),
-    }
-)
 
 
 class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -66,9 +58,9 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             email = user_input[CONF_EMAIL]
             password = user_input[CONF_PASSWORD]
+            country = user_input[CONF_COUNTRY]
             update_interval_key = user_input[CONF_UPDATE_INTERVAL]
             update_interval = UPDATE_INTERVAL_OPTIONS[update_interval_key]
-            country = self.hass.config.country or DEFAULT_COUNTRY
 
             # Test the connection
             try:
@@ -84,6 +76,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                         data={
                             CONF_EMAIL: email,
                             CONF_PASSWORD: password,
+                            CONF_COUNTRY: country,
                             CONF_UPDATE_INTERVAL: update_interval,
                             "country": country,
                             "user_id": auth_data["user_id"],
@@ -108,7 +101,30 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_EMAIL,
+                        default=(user_input or {}).get(CONF_EMAIL, ""),
+                    ): str,
+                    vol.Required(
+                        CONF_PASSWORD,
+                        default=(user_input or {}).get(CONF_PASSWORD, ""),
+                    ): str,
+                    vol.Required(
+                        CONF_COUNTRY,
+                        default=(user_input or {}).get(
+                            CONF_COUNTRY, self.hass.config.country or DEFAULT_COUNTRY
+                        ),
+                    ): TextSelector(),
+                    vol.Optional(
+                        CONF_UPDATE_INTERVAL,
+                        default=(user_input or {}).get(
+                            CONF_UPDATE_INTERVAL, "5 minutes"
+                        ),
+                    ): vol.In(UPDATE_INTERVAL_OPTIONS.keys()),
+                }
+            ),
             errors=errors,
         )
 
@@ -132,17 +148,20 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_EMAIL, default=self._reauth_entry.data[CONF_EMAIL]
                         ): str,
                         vol.Required(CONF_PASSWORD): str,
+                        vol.Required(
+                            CONF_COUNTRY,
+                            default=entry_country(self._reauth_entry.data),
+                        ): TextSelector(),
                     }
                 ),
             )
 
         email = user_input[CONF_EMAIL]
         password = user_input[CONF_PASSWORD]
+        country = user_input[CONF_COUNTRY]
 
         try:
-            auth_data = await self._test_connection(
-                email, password, entry_country(self._reauth_entry.data)
-            )
+            auth_data = await self._test_connection(email, password, country)
             if auth_data:
                 # Update the existing entry with new credentials
                 self.hass.config_entries.async_update_entry(
@@ -151,6 +170,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                         **self._reauth_entry.data,
                         CONF_EMAIL: email,
                         CONF_PASSWORD: password,
+                        CONF_COUNTRY: country,
                         "user_id": auth_data["user_id"],
                         "access_token": auth_data["access_token"],
                         "user_center_id": auth_data.get("user_center_id"),
@@ -167,6 +187,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                         {
                             vol.Required(CONF_EMAIL, default=email): str,
                             vol.Required(CONF_PASSWORD): str,
+                            vol.Required(CONF_COUNTRY, default=country): TextSelector(),
                         }
                     ),
                     errors={"base": "invalid_auth"},
@@ -178,6 +199,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_EMAIL, default=email): str,
                         vol.Required(CONF_PASSWORD): str,
+                        vol.Required(CONF_COUNTRY, default=country): TextSelector(),
                     }
                 ),
                 errors={"base": "invalid_auth"},
@@ -189,6 +211,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_EMAIL, default=email): str,
                         vol.Required(CONF_PASSWORD): str,
+                        vol.Required(CONF_COUNTRY, default=country): TextSelector(),
                     }
                 ),
                 errors={"base": "cannot_connect"},
@@ -201,6 +224,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_EMAIL, default=email): str,
                         vol.Required(CONF_PASSWORD): str,
+                        vol.Required(CONF_COUNTRY, default=country): TextSelector(),
                     }
                 ),
                 errors={"base": "unknown"},
@@ -227,9 +251,14 @@ class EufyLifeAPIOptionsFlow(OptionsFlow):
         """Manage the options."""
         if user_input is not None:
             update_interval = UPDATE_INTERVAL_OPTIONS[user_input[CONF_UPDATE_INTERVAL]]
+            country = user_input[CONF_COUNTRY]
 
             # Update the config entry data
-            new_data = {**self.config_entry.data, CONF_UPDATE_INTERVAL: update_interval}
+            new_data = {
+                **self.config_entry.data,
+                CONF_UPDATE_INTERVAL: update_interval,
+                CONF_COUNTRY: country,
+            }
             self.hass.config_entries.async_update_entry(
                 self.config_entry, data=new_data
             )
@@ -256,6 +285,10 @@ class EufyLifeAPIOptionsFlow(OptionsFlow):
                     vol.Required(CONF_UPDATE_INTERVAL, default=current_key): vol.In(
                         UPDATE_INTERVAL_OPTIONS.keys()
                     ),
+                    vol.Required(
+                        CONF_COUNTRY,
+                        default=entry_country(self.config_entry.data),
+                    ): TextSelector(),
                 }
             ),
         )
