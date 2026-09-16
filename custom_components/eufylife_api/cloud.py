@@ -455,23 +455,34 @@ def _encode_animation_layer(layer: dict[str, Any]) -> bytes:
 
     trailing = bytearray()
     if layer_type == 0:
+        grad = int(layer.get("gradient_value", 0)) & 0xFFFF
         trailing.extend([
             int(layer.get("color_fill_mode", 0)) & 0xFF,
             int(layer.get("color_pick_mode", 0)) & 0xFF,
             int(layer.get("flow_direction", 0)) & 0xFF,
             int(layer.get("direction_change_mode", 0)) & 0xFF,
+        ])
+        trailing.extend(grad.to_bytes(2, "big"))
+        i_blk = layer.get("insert_block_range", 0)
+        i_blk_val = int(i_blk[0] if isinstance(i_blk, list) else i_blk) & 0xFF
+        blk_blk = layer.get("insert_black_block_range", 0)
+        blk_blk_val = int(blk_blk[0] if isinstance(blk_blk, list) else blk_blk) & 0xFF
+        trailing.extend([
             int(layer.get("insert_block_mode", 0)) & 0xFF,
-            0,
-            int(layer.get("insert_block_range", 0)) & 0xFF,
+            i_blk_val,
             int(layer.get("insert_black_block_mode", 0)) & 0xFF,
             0,
-            int(layer.get("insert_black_block_range", 0)) & 0xFF,
+            blk_blk_val,
             int(layer.get("insert_black_block_position_mode", 0)) & 0xFF,
         ])
         b_var = int(layer.get("brightness_variation_type", 0)) & 0xFF
         b_rng = layer.get("brightness_range", [0, 100])
-        b_hi = int(b_rng[1]) & 0xFF if len(b_rng) > 1 else 100
-        b_lo = int(b_rng[0]) & 0xFF if len(b_rng) > 0 else 0
+        if isinstance(b_rng, list):
+            b_hi = int(b_rng[1]) & 0xFF if len(b_rng) > 1 else 100
+            b_lo = int(b_rng[0]) & 0xFF if len(b_rng) > 0 else 0
+        else:
+            b_hi = int(b_rng) & 0xFF
+            b_lo = 0
         cycle = int(layer.get("light_effect_cycle_method", 0)) & 0xFF
         param = int(layer.get("execution_parameter", 0)) & 0xFF
         trailing.extend([b_var, b_hi, b_lo, cycle, param])
@@ -484,17 +495,25 @@ def _encode_animation_layer(layer: dict[str, Any]) -> bytes:
         seq = int(layer.get("color_pick_sequence", 0)) & 0xFF
         cycle = int(layer.get("light_effect_cycle_method", 0)) & 0xFF
         param = int(layer.get("execution_parameter", 0)) & 0xFF
-        trailing.extend([b_val, disp, q_rng, trans, switch, seq, 0, 0, cycle, param])
+        trailing.extend([b_val, disp, q_rng, trans, switch, 0, 0, seq, cycle, param])
     elif layer_type == 2:
         b_var = int(layer.get("brightness_variation_type", 0)) & 0xFF
         b_rng = layer.get("brightness_range", [0, 100])
-        b_hi = int(b_rng[1]) & 0xFF if len(b_rng) > 1 else 100
-        b_lo = int(b_rng[0]) & 0xFF if len(b_rng) > 0 else 0
+        if isinstance(b_rng, list):
+            b_hi = int(b_rng[1]) & 0xFF if len(b_rng) > 1 else 100
+            b_lo = int(b_rng[0]) & 0xFF if len(b_rng) > 0 else 0
+        else:
+            b_hi = int(b_rng) & 0xFF
+            b_lo = 0
         c_count = int(layer.get("blink_cycle_count", 1)) & 0xFF
         pos = int(layer.get("blink_position_mode", 1)) & 0xFF
         b_int = layer.get("blink_interval", [2, 5])
-        i_hi = int(b_int[1]) & 0xFF if len(b_int) > 1 else 5
-        i_lo = int(b_int[0]) & 0xFF if len(b_int) > 0 else 2
+        if isinstance(b_int, list):
+            i_hi = int(b_int[1]) & 0xFF if len(b_int) > 1 else 5
+            i_lo = int(b_int[0]) & 0xFF if len(b_int) > 0 else 2
+        else:
+            i_hi = int(b_int) & 0xFF
+            i_lo = 0
         qty = int(layer.get("blink_quantity", 255)) & 0xFF
         async_flag = int(layer.get("blink_asynchrony", 1)) & 0xFF
         c_switch = int(layer.get("blink_color_switch_mode", 2)) & 0xFF
@@ -1087,9 +1106,29 @@ class EufyLifeLightCloud:
         if (rgb_color is not None or rgbww_color is not None) and effect is not None:
             raise EufyLifeCloudError("Choose either a color or a preset")
 
+        # Fallback to current device state when adjusting speed or direction alone
+        if (
+            effect is None
+            and params is None
+            and colors is None
+            and rgb_color is None
+            and rgbww_color is None
+            and (speed is not None or direction is not None)
+        ):
+            if device.effect is not None and device.effect in device.effects:
+                effect = device.effect
+            elif device.colors:
+                colors = device.colors
+            elif device.rgbww_color is not None:
+                rgbww_color = device.rgbww_color
+            elif device.rgb_color is not None:
+                rgb_color = device.rgb_color
+            else:
+                rgbww_color = (255, 255, 255, 0, 0)
+
         # Determine parameters
-        target_speed = speed if speed is not None else 1
-        target_direction = direction if direction is not None else 0
+        target_speed = speed if speed is not None else (device.speed if device.speed is not None else 1)
+        target_direction = direction if direction is not None else (device.direction if device.direction is not None else 0)
         target_cloud_id = None
         light_id = None
         target_colors = None
