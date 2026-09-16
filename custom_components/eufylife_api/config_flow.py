@@ -18,7 +18,7 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import CountrySelector
+from homeassistant.helpers.selector import TextSelector
 
 from .cloud import EufyLifeAuthError, async_login
 from .const import (
@@ -113,7 +113,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                         default=(user_input or {}).get(
                             CONF_COUNTRY, self.hass.config.country or "US"
                         ),
-                    ): CountrySelector(),
+                    ): TextSelector(),
                     vol.Optional(
                         CONF_UPDATE_INTERVAL,
                         default=(user_input or {}).get(
@@ -150,7 +150,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                             default=self._reauth_entry.data.get(
                                 CONF_COUNTRY, self.hass.config.country or "US"
                             ),
-                        ): CountrySelector(),
+                        ): TextSelector(),
                     }
                 ),
             )
@@ -186,7 +186,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                         {
                             vol.Required(CONF_EMAIL, default=email): str,
                             vol.Required(CONF_PASSWORD): str,
-                            vol.Required(CONF_COUNTRY, default=country): CountrySelector(),
+                            vol.Required(CONF_COUNTRY, default=country): TextSelector(),
                         }
                     ),
                     errors={"base": "invalid_auth"},
@@ -198,7 +198,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_EMAIL, default=email): str,
                         vol.Required(CONF_PASSWORD): str,
-                        vol.Required(CONF_COUNTRY, default=country): CountrySelector(),
+                        vol.Required(CONF_COUNTRY, default=country): TextSelector(),
                     }
                 ),
                 errors={"base": "invalid_auth"},
@@ -210,7 +210,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_EMAIL, default=email): str,
                         vol.Required(CONF_PASSWORD): str,
-                        vol.Required(CONF_COUNTRY, default=country): CountrySelector(),
+                        vol.Required(CONF_COUNTRY, default=country): TextSelector(),
                     }
                 ),
                 errors={"base": "cannot_connect"},
@@ -223,7 +223,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_EMAIL, default=email): str,
                         vol.Required(CONF_PASSWORD): str,
-                        vol.Required(CONF_COUNTRY, default=country): CountrySelector(),
+                        vol.Required(CONF_COUNTRY, default=country): TextSelector(),
                     }
                 ),
                 errors={"base": "unknown"},
@@ -255,9 +255,14 @@ class EufyLifeAPIOptionsFlow(OptionsFlow):
         """Manage the options."""
         if user_input is not None:
             update_interval = UPDATE_INTERVAL_OPTIONS[user_input[CONF_UPDATE_INTERVAL]]
+            country = user_input[CONF_COUNTRY]
 
             # Update the config entry data
-            new_data = {**self.config_entry.data, CONF_UPDATE_INTERVAL: update_interval}
+            new_data = {
+                **self.config_entry.data,
+                CONF_UPDATE_INTERVAL: update_interval,
+                CONF_COUNTRY: country,
+            }
             self.hass.config_entries.async_update_entry(
                 self.config_entry, data=new_data
             )
@@ -284,6 +289,12 @@ class EufyLifeAPIOptionsFlow(OptionsFlow):
                     vol.Required(CONF_UPDATE_INTERVAL, default=current_key): vol.In(
                         UPDATE_INTERVAL_OPTIONS.keys()
                     ),
+                    vol.Required(
+                        CONF_COUNTRY,
+                        default=self.config_entry.data.get(
+                            CONF_COUNTRY, self.hass.config.country or "US"
+                        ),
+                    ): TextSelector(),
                 }
             ),
         )

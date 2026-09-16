@@ -31,17 +31,39 @@ async def validate():
     parser.add_argument("--email", help="EufyLife email")
     parser.add_argument("--password", help="EufyLife password")
     parser.add_argument("--country", help="Country code (e.g. US, DE)")
-    parser.add_argument("--test-opcode", help="Opcode hex (e.g. 0210)")
-    parser.add_argument("--test-tags", help="Semicolon separated tags e.g. A3|int4L|10494;A4|str|JSON")
-    parser.add_argument("--test-tlv", help="TLV format (0, 1, 2L, 2B, M)")
-    parser.add_argument("--test-serial", help="Serial of the device to test")
+    parser.add_argument(
+        "--animation",
+        help='Animation preset name, for example "Guy Fawkes Night"',
+    )
+    parser.add_argument(
+        "--list-animations",
+        action="store_true",
+        help="List the named animations available on the selected device",
+    )
+    parser.add_argument("--test-opcode", help=argparse.SUPPRESS)
+    parser.add_argument("--test-tags", help=argparse.SUPPRESS)
+    parser.add_argument("--test-tlv", help=argparse.SUPPRESS)
+    parser.add_argument("--test-version", type=int, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--test-serial",
+        "--serial",
+        dest="test_serial",
+        help="Serial of the device to control (required when multiple devices are found)",
+    )
+    parser.add_argument("--skip-envelope", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--test-compound", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.WARNING)
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
     
-    email = args.email or input("EufyLife Email: ")
-    password = args.password or getpass.getpass("EufyLife Password: ")
-    country = (args.country or input("Country Code (e.g. US, DE, GB): ") or "US").lower()
+    email = args.email or os.environ.get("YOUR_EMAIL") or input("EufyLife Email: ")
+    password = args.password or os.environ.get("YOUR_PASSWORD") or getpass.getpass("EufyLife Password: ")
+    country = (
+        args.country
+        or os.environ.get("YOUR_COUNTRY")
+        or input("Country Code (e.g. US, DE, GB): ")
+        or "US"
+    ).lower()
 
     async with aiohttp.ClientSession() as session:
         print("\nLogging in...")
@@ -58,7 +80,7 @@ async def validate():
             user_id=auth["user_id"],
             user_center_id=auth["user_center_id"],
             user_center_token=auth["user_center_token"],
-            openudid="validate-script-id",
+            openudid=f"validate-{os.getpid()}",
             country=country,
             language="en",
             timezone="UTC"
@@ -87,6 +109,46 @@ async def validate():
         device_list = list(cloud.devices.values())
         if not device_list:
             print("No devices found.")
+            await cloud.async_close()
+            return
+
+        if args.animation or args.list_animations:
+            device = None
+            if args.test_serial:
+                device = cloud.devices.get(args.test_serial)
+                if not device:
+                    print(f"Device with serial {args.test_serial} not found.")
+                    await cloud.async_close()
+                    return
+            elif len(device_list) == 1:
+                device = device_list[0]
+            else:
+                print("Multiple devices found; use --test-serial to select one.")
+                await cloud.async_close()
+                return
+
+            if args.list_animations:
+                print(f"\nAnimations for {device.name}:")
+                for name in device.effects:
+                    print(f"- {name}")
+                await cloud.async_close()
+                return
+
+            animation_name = next(
+                (name for name in device.effects if name.casefold() == args.animation.casefold()),
+                None,
+            )
+            if animation_name is None:
+                print(f'Animation not found: "{args.animation}"')
+                print("Available animations:")
+                for name in device.effects:
+                    print(f"- {name}")
+                await cloud.async_close()
+                return
+
+            print(f"Setting animation: {animation_name} on {device.name}...")
+            await cloud.async_set_effect(device.serial, effect=animation_name, refresh=False)
+            print("Animation command sent successfully.")
             await cloud.async_close()
             return
 
@@ -122,6 +184,9 @@ async def validate():
                         res += bytes([byte])
                         if l == 0: break
                     return bytes([tag]) + res + val
+                if tlv_format == 'A':
+                    if len(val) < 256: return bytes([tag, len(val)]) + val
+                    return bytes([tag]) + len(val).to_bytes(2, "little") + val
                 return b""
 
             from custom_components.eufylife_api.cloud import _command_payload
@@ -134,11 +199,23 @@ async def validate():
                 elif t_type == 'int2L': val = int(t_val).to_bytes(2, "little")
                 elif t_type == 'int4L': val = int(t_val).to_bytes(4, "little")
                 cmd_payload += make_tlv(tag, val)
-            
-            full_payload = _command_payload(cloud._user_id, cmd_payload)
-            print(f"Sending {opcode}...")
-            cloud._publish(device.serial, opcode, full_payload)
-            print("Command sent! Waiting 5s then closing.")
+
+            if args.skip_envelope:
+                full_payload = cmd_payload
+            else:
+                full_payload = _command_payload(cloud._user_id, cmd_payload)
+            print(f"Sending {opcode} (v{args.test_version or 0}, skip_envelope={args.skip_envelope})...")
+            cloud._publish(device.serial, opcode, full_payload, version=args.test_version or 0)
+
+            if args.test_compound:
+                print("Waiting 1s after handshake...")
+                await asyncio.sleep(1)
+                print("Sending Compound Effect (Guy Fawkes Night)...")
+                # This will use the logic in cloud.py for T8L40 effects (Nested Envelope)
+                await cloud.async_set_effect(device.serial, effect="Guy Fawkes Night", refresh=False)
+                print("Compound sequence complete!")
+
+            print("Waiting 5s then closing.")
             await asyncio.sleep(5)
             await cloud.async_close()
             return
@@ -187,8 +264,7 @@ async def validate():
                 print("3. Set RGB/RGBWW Color")
                 print("4. Set Effect (Preset, Speed, Direction)")
                 print("5. Set Segmented Colors (DIY)")
-                print("d. Dump raw effects catalog (for troubleshooting)")
-                print("t. Test LightShowCmd hypothesis (for new effects)")
+                print("a. Advanced tools")
                 print("b. Back to main menu")
                 
                 action = input("\nAction: ").strip().lower()
@@ -201,16 +277,32 @@ async def validate():
                         print(f"Turning {'ON' if new_state else 'OFF'}...")
                         cloud.set_power(device.serial, new_state)
                         await asyncio.sleep(1)
-                    elif action == 'd':
-                        print("\nFetching raw effects catalog...")
-                        raw_catalog = await cloud._async_post(
-                            "/app/light/lightmode/list",
-                            {"sns": [device.serial], "light_type": None, "scene_id": None},
-                        )
-                        import json
-                        print(json.dumps(raw_catalog, indent=2))
-                        print("\n--- End of Catalog ---")
-                    elif action == 't':
+                    elif action == 'a':
+                        advanced_action = input(
+                            "\nAdvanced tools: s=scene ID, d=dump catalog, t=raw LightShow test, b=back: "
+                        ).strip().lower()
+                        if advanced_action == 'b':
+                            continue
+                        if advanced_action == 'd':
+                            print("\nFetching raw effects catalog...")
+                            raw_catalog = await cloud._async_post(
+                                "/app/light/lightmode/list",
+                                {"sns": [device.serial], "light_type": None, "scene_id": None},
+                            )
+                            import json
+                            print(json.dumps(raw_catalog, indent=2))
+                            print("\n--- End of Catalog ---")
+                            continue
+                        if advanced_action == 's':
+                            scene_id = int(input("Enter scene ID: "))
+                            print(f"Setting scene {scene_id}...")
+                            await cloud.async_set_scene(device.serial, scene_id, refresh=False)
+                            print("Scene command sent successfully.")
+                            continue
+                        if advanced_action != 't':
+                            print("Invalid advanced action.")
+                            continue
+
                         print("\n--- LightShowCmd Hypothesis Test ---")
                         opcode_input = input("Enter opcode (e.g. 0206, 0210, 0211): ")
                         opcode = (int(opcode_input[:2], 16), int(opcode_input[2:], 16))
@@ -220,9 +312,9 @@ async def validate():
                             val_to_send = params.encode()
                         else:
                             val_to_send = bytes.fromhex(params)
-                            
+
                         tlv_format = input("TLV format? (0=No TLV, 1=1-byte len, 2L=2-byte LE, 2B=2-byte BE, M=MQTT-varint): ")
-                        
+
                         def make_tlv(tag, val):
                             if tlv_format == '0': return val
                             if tlv_format == '1':
@@ -245,7 +337,7 @@ async def validate():
                             return b""
 
                         from custom_components.eufylife_api.cloud import _command_payload
-                        
+
                         cmd_payload = b""
                         while True:
                             tag_in = input("Enter tag (hex, e.g. A3, or 'done'): ")
@@ -256,11 +348,10 @@ async def validate():
                             elif val_type == 'str': val = input("Value (string): ").encode()
                             elif val_type == 'int2L': val = int(input("Value (int): ")).to_bytes(2, "little")
                             elif val_type == 'int4L': val = int(input("Value (int): ")).to_bytes(4, "little")
-                            
+
                             cmd_payload += make_tlv(tag, val)
-                        
+
                         full_payload = _command_payload(cloud._user_id, cmd_payload)
-                        
                         print(f"Sending {opcode}...")
                         cloud._publish(device.serial, opcode, full_payload)
                         print("Command sent! Check if the light changed.")
@@ -296,15 +387,17 @@ async def validate():
                         e_choice = input("\nSelect preset number: ")
                         e_idx = int(e_choice) - 1
                         effect_name = effect_list[e_idx]
-                        
+
                         speed_val = input("Enter speed (1-10, leave empty for default): ")
                         speed = int(speed_val) if speed_val.strip() else None
-                        
+
                         dir_val = input("Enter direction (0-1, leave empty for default): ")
                         direction = int(dir_val) if dir_val.strip() else None
-                        
+
+                        ref = input("Refresh settings after? (y/n): ").lower() == 'y'
+
                         print(f"Setting preset: {effect_name}...")
-                        await cloud.async_set_effect(device.serial, effect=effect_name, speed=speed, direction=direction)
+                        await cloud.async_set_effect(device.serial, effect=effect_name, speed=speed, direction=direction, refresh=ref)
                         print("Success!")
                     elif action == '5':
                         if not device.lamp_count:

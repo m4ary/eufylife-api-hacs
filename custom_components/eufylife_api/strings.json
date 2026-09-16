@@ -7,11 +7,11 @@
         "data": {
           "email": "Email",
           "password": "Password",
-          "country": "Country",
+          "country": "Country Code",
           "update_interval": "Update Interval"
         },
         "data_description": {
-          "country": "The country where your EufyLife account was created. This determines which regional API server is used.",
+          "country": "2-letter country code (e.g. US, DE, GB) where your EufyLife account was created. This determines which regional API server is used.",
           "update_interval": "How often to check for new weight data"
         }
       },
@@ -21,7 +21,7 @@
         "data": {
           "email": "Email",
           "password": "Password",
-          "country": "Country"
+          "country": "Country Code"
         }
       }
     },
@@ -41,9 +41,11 @@
         "title": "EufyLife API Options",
         "description": "Configure your EufyLife API integration options.",
         "data": {
+          "country": "Country Code",
           "update_interval": "Update Interval"
         },
         "data_description": {
+          "country": "2-letter country code (e.g. US, DE, GB) where your EufyLife account was created. This determines which regional API server is used.",
           "update_interval": "How often to check for new weight data"
         }
       }

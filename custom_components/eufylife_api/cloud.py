@@ -47,8 +47,12 @@ _GET_SETTINGS_RESPONSE = (0x0A, 0x00)
 _SET_POWER = (0x02, 0x01)
 _SET_POWER_RESPONSE = (0x0A, 0x01)
 _REPORT_DEVICE_INFO = (0x02, 0x04)
+_SET_SCENE = (0x02, 0x02)
+_SET_SCENE_RESPONSE = (0x0A, 0x02)
 _SET_EFFECT = (0x02, 0x06)
 _SET_EFFECT_RESPONSE = (0x0A, 0x06)
+_SET_ANIMATION = (0x02, 0x0D)
+_SET_ANIMATION_RESPONSE = (0x0A, 0x0D)
 _SET_LIGHT_SHOW = (0x02, 0x10)
 _SET_LIGHT_SHOW_RESPONSE = (0x0A, 0x10)
 _SET_LIGHT_AI = (0x02, 0x11)
@@ -298,10 +302,10 @@ def _tlv_long(tag: int, value: bytes) -> bytes:
     return bytes([tag]) + len(value).to_bytes(2, "little") + value
 
 
-def _frame(opcode: tuple[int, int], payload: bytes) -> bytes:
+def _frame(opcode: tuple[int, int], payload: bytes, version: int = 0) -> bytes:
     frame = bytearray((0xFF, 0x09))
     frame.extend((len(payload) + 10).to_bytes(2, "little"))
-    frame.extend((0x03, 0x00, 0x02, *opcode))
+    frame.extend((0x03, version, 0x02, *opcode))
     frame.extend(payload)
     frame.append(0)
     frame[-1] = _xor(frame[:-1])
@@ -370,6 +374,183 @@ def _effect_payload(
     return value + _tlv(0xAE, b"\x00") + _tlv(0xB0, bytes([update_method]))
 
 
+_KNOWN_COLOR_MAP = {
+    "ff4d6a": bytes.fromhex("ff01130500"),
+    "ffa36a": bytes.fromhex("ff00146200"),
+    "ff6a8a": bytes.fromhex("ff01280c00"),
+    "a36aff": bytes.fromhex("8701ff0011"),
+    "6affff": bytes.fromhex("03ff740017"),
+    "a8ff59": bytes.fromhex("02ff011701"),
+    "ff5157": bytes.fromhex("ff010b0600"),
+    "ff6c5b": bytes.fromhex("ff000b0d00"),
+    "ffce3d": bytes.fromhex("ffa1000b00"),
+    "0ff3ff": bytes.fromhex("01ff85000e"),
+    "99e2ff": bytes.fromhex("04ffc30038"),
+    "a35bff": bytes.fromhex("9600ff000b"),
+    "fc5bb2": bytes.fromhex("fc01470800"),
+    "ff9a03": bytes.fromhex("ff56000000"),
+    "ff9f85": bytes.fromhex("ff01404e00"),
+    "ffde93": bytes.fromhex("13ff059d34"),
+}
+
+_T8L40_VERIFIED_ANIMATION_LAYERS: dict[int, dict[str, Any]] = {
+    10854: {  # Guy Fawkes Night
+        "speed": 54,
+        "exec_mode": 3,
+        "layers": [
+            bytes.fromhex("0164640001010082010005ff01130500ff00146200ff01280c008701ff001103ff740017000000000000000300000900046410020c"),
+            bytes.fromhex("0014644b0101000103010503ff7400178701ff0011ff01280c0002ff011701ff0113050061010202000000010002"),
+        ],
+    },
+    10599: {  # Celebrating
+        "speed": 30,
+        "exec_mode": 0,
+        "layers": [
+            bytes.fromhex("0014640001010080000105ff010b0600ff000b0d00ffa1000b0001ff85000e04ffc3003864010502000000000001"),
+            bytes.fromhex("0019640001010080000205ff010b0600ff000b0d00ffa1000b0001ff85000e04ffc3003803640901010502ff01020001"),
+        ],
+    },
+    10589: {  # Party
+        "speed": 28,
+        "exec_mode": 0,
+        "layers": [
+            bytes.fromhex("00246400010100800001059600ff000bfc01470800ff56000000ff01404e0013ff059d3464010502000000000100"),
+        ],
+    },
+}
+
+
+def _encode_animation_layer(layer: dict[str, Any]) -> bytes:
+    pri = int(layer.get("layer_priority", 0)) & 0xFF
+    spd = int(layer.get("layer_speed", 100)) & 0xFF
+    rng = layer.get("layer_range", [0, 100])
+    r_hi = int(rng[1]) & 0xFF if len(rng) > 1 else 100
+    r_lo = int(rng[0]) & 0xFF if len(rng) > 0 else 0
+    i_type = int(layer.get("interval_type", 1)) & 0xFF
+    i_val = int(layer.get("interval_value", 1)) & 0xFF
+    exec_param = int(layer.get("layer_execution_parameter", 1)) & 0xFFFF
+    post_status = int(layer.get("light_effect_post_cycle_status", 0)) & 0xFF
+    layer_type = int(layer.get("current_layer_type", 1)) & 0xFF
+
+    header = (
+        bytes([pri, spd, r_hi, r_lo, i_type, i_val])
+        + exec_param.to_bytes(2, "big")
+        + bytes([post_status, layer_type])
+    )
+
+    raw_colors = layer.get("colors", "")
+    color_list = raw_colors.split("|") if isinstance(raw_colors, str) else []
+    color_bytes = bytearray([len(color_list)])
+    for c_str in color_list:
+        c_clean = c_str.strip().lower()
+        if c_clean in _KNOWN_COLOR_MAP:
+            color_bytes.extend(_KNOWN_COLOR_MAP[c_clean])
+        elif len(c_clean) == 6:
+            r = int(c_clean[0:2], 16)
+            g = int(c_clean[2:4], 16)
+            b = int(c_clean[4:6], 16)
+            color_bytes.extend([r, g, b, 0, 0])
+        else:
+            color_bytes.extend([255, 255, 255, 0, 0])
+
+    trailing = bytearray()
+    if layer_type == 0:
+        trailing.extend([
+            int(layer.get("color_fill_mode", 0)) & 0xFF,
+            int(layer.get("color_pick_mode", 0)) & 0xFF,
+            int(layer.get("flow_direction", 0)) & 0xFF,
+            int(layer.get("direction_change_mode", 0)) & 0xFF,
+            int(layer.get("insert_block_mode", 0)) & 0xFF,
+            0,
+            int(layer.get("insert_block_range", 0)) & 0xFF,
+            int(layer.get("insert_black_block_mode", 0)) & 0xFF,
+            0,
+            int(layer.get("insert_black_block_range", 0)) & 0xFF,
+            int(layer.get("insert_black_block_position_mode", 0)) & 0xFF,
+        ])
+        b_var = int(layer.get("brightness_variation_type", 0)) & 0xFF
+        b_rng = layer.get("brightness_range", [0, 100])
+        b_hi = int(b_rng[1]) & 0xFF if len(b_rng) > 1 else 100
+        b_lo = int(b_rng[0]) & 0xFF if len(b_rng) > 0 else 0
+        cycle = int(layer.get("light_effect_cycle_method", 0)) & 0xFF
+        param = int(layer.get("execution_parameter", 0)) & 0xFF
+        trailing.extend([b_var, b_hi, b_lo, cycle, param])
+    elif layer_type == 1:
+        b_val = int(layer.get("brightness_value", 100)) & 0xFF
+        disp = int(layer.get("display_mode", 1)) & 0xFF
+        q_rng = int(layer.get("color_quantity_range", len(color_list))) & 0xFF
+        trans = int(layer.get("transition_mode", 2)) & 0xFF
+        switch = int(layer.get("color_switch_mode", 0)) & 0xFF
+        seq = int(layer.get("color_pick_sequence", 0)) & 0xFF
+        cycle = int(layer.get("light_effect_cycle_method", 0)) & 0xFF
+        param = int(layer.get("execution_parameter", 0)) & 0xFF
+        trailing.extend([b_val, disp, q_rng, trans, switch, seq, 0, 0, cycle, param])
+    elif layer_type == 2:
+        b_var = int(layer.get("brightness_variation_type", 0)) & 0xFF
+        b_rng = layer.get("brightness_range", [0, 100])
+        b_hi = int(b_rng[1]) & 0xFF if len(b_rng) > 1 else 100
+        b_lo = int(b_rng[0]) & 0xFF if len(b_rng) > 0 else 0
+        c_count = int(layer.get("blink_cycle_count", 1)) & 0xFF
+        pos = int(layer.get("blink_position_mode", 1)) & 0xFF
+        b_int = layer.get("blink_interval", [2, 5])
+        i_hi = int(b_int[1]) & 0xFF if len(b_int) > 1 else 5
+        i_lo = int(b_int[0]) & 0xFF if len(b_int) > 0 else 2
+        qty = int(layer.get("blink_quantity", 255)) & 0xFF
+        async_flag = int(layer.get("blink_asynchrony", 1)) & 0xFF
+        c_switch = int(layer.get("blink_color_switch_mode", 2)) & 0xFF
+        cycle = int(layer.get("light_effect_cycle_method", 0)) & 0xFF
+        param = int(layer.get("execution_parameter", 0)) & 0xFF
+        trailing.extend([b_var, b_hi, b_lo, c_count, pos, i_hi, i_lo, qty, async_flag, c_switch, cycle, param])
+
+    return header + bytes(color_bytes) + bytes(trailing)
+
+
+def _build_t8l40_animation_payload(
+    cloud_id: int,
+    params: str | dict[str, Any] | None = None,
+    speed: int | None = None,
+) -> bytes:
+    """Build the authentic binary multi-layer animation payload for T8L40 (Opcode 020D)."""
+    if cloud_id in _T8L40_VERIFIED_ANIMATION_LAYERS:
+        data = _T8L40_VERIFIED_ANIMATION_LAYERS[cloud_id]
+        eff_speed = speed if speed is not None else data["speed"]
+        body = (
+            _tlv(0xA3, cloud_id.to_bytes(4, "little"))
+            + _tlv(0xA4, bytes([eff_speed & 0xFF]))
+            + _tlv(0xA5, bytes([len(data["layers"]) & 0xFF]))
+            + _tlv(0xA6, bytes([data["exec_mode"] & 0xFF]))
+            + _tlv(0xA8, b"\x00")
+        )
+        for i, l_bytes in enumerate(data["layers"]):
+            tag = 0xA9 + i
+            body += bytes([tag, len(l_bytes)]) + l_bytes
+        return body
+
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except Exception:
+            params = {}
+    if not isinstance(params, dict):
+        params = {}
+
+    eff_speed = speed if speed is not None else int(params.get("light_effect_speed") or 50)
+    layers = params.get("layer", [])
+    exec_mode = int(params.get("layer_execution_mode") or 0)
+    body = (
+        _tlv(0xA3, cloud_id.to_bytes(4, "little"))
+        + _tlv(0xA4, bytes([eff_speed & 0xFF]))
+        + _tlv(0xA5, bytes([len(layers) & 0xFF]))
+        + _tlv(0xA6, bytes([exec_mode & 0xFF]))
+        + _tlv(0xA8, b"\x00")
+    )
+    for i, l in enumerate(layers):
+        l_bytes = _encode_animation_layer(l)
+        tag = 0xA9 + i
+        body += bytes([tag, len(l_bytes)]) + l_bytes
+    return body
+
+
 def _parse_effects(data: Any) -> dict[str, dict[str, Any]]:
     """Expose only catalog entries supported by the recovered classic serializer."""
     result = {}
@@ -388,40 +569,49 @@ def _parse_effects(data: Any) -> dict[str, dict[str, Any]]:
                     if not isinstance(preset, dict):
                         continue
                     name = preset.get("name", "Unknown")
+                    palette = preset.get("rgb_hex")
+                    if (
+                        isinstance(name, str)
+                        and name
+                        and isinstance(palette, str)
+                        and re.fullmatch(
+                            r"[0-9a-fA-F]{6}(?:\|[0-9a-fA-F]{6})*", palette
+                        )
+                        and "dynamic" in preset
+                    ):
+                        colors = [tuple(bytes.fromhex(c)) for c in palette.split("|")]
+                        params = {
+                            "light_id": int(preset["light_id"]),
+                            "dynamic": int(preset["dynamic"]),
+                            "direction": int(preset.get("dynamic_direct", 0)),
+                            "speed": int(preset.get("speed", 1)),
+                            "colors": colors,
+                        }
+                        if "scene_id" in scene:
+                            params["scene_id"] = int(scene["scene_id"])
+                        if preset.get("params"):
+                            params["params"] = preset["params"]
+                        if preset.get("params_version"):
+                            params["params_version"] = int(preset["params_version"])
+                        _effect_payload(
+                            params["dynamic"],
+                            colors,
+                            params["direction"],
+                            params["speed"],
+                            params["light_id"],
+                        )
+                        result[name] = params
+                        continue
+
                     params_version = int(preset.get("params_version") or 0)
-                    if params_version > 0:
+                    if params_version > 0 and preset.get("params"):
                         params = {
                             "params_version": params_version,
                             "params": preset.get("params"),
                             "light_id": int(preset.get("light_id") or 0),
+                            "scene_id": int(scene.get("scene_id") or 0),
                         }
                         result[name] = params
-                        continue
-                    palette = preset["rgb_hex"]
-                    if (
-                        not isinstance(name, str)
-                        or not name
-                        or not re.fullmatch(
-                            r"[0-9a-fA-F]{6}(?:\|[0-9a-fA-F]{6})*", palette
-                        )
-                    ):
-                        continue
-                    colors = [tuple(bytes.fromhex(c)) for c in palette.split("|")]
-                    params = {
-                        "light_id": int(preset["light_id"]),
-                        "dynamic": int(preset["dynamic"]),
-                        "direction": int(preset["dynamic_direct"]),
-                        "speed": int(preset["speed"]),
-                        "colors": colors,
-                    }
-                    _effect_payload(
-                        params["dynamic"],
-                        colors,
-                        params["direction"],
-                        params["speed"],
-                        params["light_id"],
-                    )
-                    result[name] = params
                 except (KeyError, TypeError, ValueError, EufyLifeCloudError):
                     _LOGGER.debug("Skipping unsupported light preset")
     return result
@@ -486,6 +676,7 @@ class EufyLifeLightCloud:
         self.connected = False
         self._effect_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._effect_replies: dict[str, asyncio.Future[None]] = {}
+        self._msg_seq = 0
 
     async def async_start(self) -> None:
         """Discover lights and start the app's certificate-authenticated MQTT link."""
@@ -661,7 +852,9 @@ class EufyLifeLightCloud:
         for device in self.devices.values():
             prefix = f"eufy_life/{device.model}/{device.serial}"
             for topic in (
+                f"cmd/{prefix}/req",
                 f"cmd/{prefix}/res",
+                f"cmd/{prefix}/app/req",
                 f"cmd/{prefix}/app/res",
                 f"cmd/{prefix}/app/ota/res",
                 f"synq/{prefix}/state_info",
@@ -686,6 +879,7 @@ class EufyLifeLightCloud:
     def _on_message(
         self, _client: mqtt.Client, _userdata: Any, message: mqtt.MQTTMessage
     ) -> None:
+        _LOGGER.info("MQTT message received on %s: %s", message.topic, message.payload[:200])
         try:
             parts = message.topic.split("/")
             if len(parts) < 5 or (serial := parts[3]) not in self.devices:
@@ -695,6 +889,7 @@ class EufyLifeLightCloud:
             if isinstance(inner, str):
                 inner = json.loads(inner)
             if not isinstance(inner, dict):
+                _LOGGER.info("MQTT payload is not a dict")
                 return
             if message.topic.endswith("/state_info"):
                 status = inner.get("status")
@@ -702,16 +897,54 @@ class EufyLifeLightCloud:
                     self.devices[serial].online = status
                     self._notify(serial)
                 return
-            if not message.topic.endswith("/app/res"):
+
+            def unwrap(data: Any) -> bytes | None:
+                if isinstance(data, bytes):
+                    if data.startswith(b"\xff\x09"):
+                        return data
+                    try:
+                        return unwrap(data.decode())
+                    except Exception:
+                        return None
+                if not isinstance(data, str):
+                    return None
+                if not data:
+                    return None
+
+                # Try Hex
+                if len(data) >= 20 and all(c in "0123456789abcdefABCDEF" for c in data[:20]):
+                    try:
+                        b = bytes.fromhex(data)
+                        if b.startswith(b"\xff\x09"):
+                            return b
+                    except Exception:
+                        pass
+
+                # Try JSON
+                if data.startswith("{"):
+                    try:
+                        j = json.loads(data)
+                        if isinstance(j, dict) and "data" in j:
+                            return unwrap(j["data"])
+                    except Exception:
+                        pass
+
+                # Try Base64
+                try:
+                    b = base64.b64decode(data, validate=True)
+                    return unwrap(b)
+                except Exception:
+                    pass
+
+                return None
+
+            frame_bytes = unwrap(inner.get("data"))
+            if not frame_bytes:
+                _LOGGER.info("MQTT message on %s could not be unwrapped to an E10 frame: %s", message.topic, inner)
                 return
-            encoded = inner.get("data")
-            if not isinstance(encoded, str):
-                return
-            common = json.loads(base64.b64decode(encoded, validate=True).decode())
-            frame_hex = common.get("data") if isinstance(common, dict) else None
-            if not isinstance(frame_hex, str):
-                return
-            opcode, payload = _parse_frame(bytes.fromhex(frame_hex))
+
+            _LOGGER.info("Unwrapped frame bytes for %s (len=%s): %s", serial, len(frame_bytes), frame_bytes.hex())
+            opcode, payload = _parse_frame(frame_bytes)
             self._handle_frame(serial, opcode, payload)
         except Exception:  # MQTT input is an external trust boundary.
             _LOGGER.exception("Discarding an invalid Eufy Life MQTT message")
@@ -719,16 +952,34 @@ class EufyLifeLightCloud:
     def _handle_frame(
         self, serial: str, opcode: tuple[int, int], payload: bytes
     ) -> None:
-        if opcode in (_SET_EFFECT_RESPONSE, _SET_LIGHT_SHOW_RESPONSE, _SET_LIGHT_AI_RESPONSE):
+        _LOGGER.info("Frame received for %s: opcode=%s, payload=%s", serial, opcode, payload.hex())
+
+        # T8L40 echoes the command opcode (02, 04) on success or status reports
+        if self.devices[serial].model == _T8L40_MODEL and opcode == (0x02, 0x04):
+            self._loop.call_soon_threadsafe(self._complete_effect, serial, 0)
+
+        if opcode == (0x02, 0x00):
+            self._loop.call_soon_threadsafe(self._complete_effect, serial, 0)
+            return
+
+        if opcode in (
+            _SET_EFFECT_RESPONSE,
+            _SET_ANIMATION_RESPONSE,
+            _SET_LIGHT_SHOW_RESPONSE,
+            _SET_LIGHT_AI_RESPONSE,
+            _SET_SCENE_RESPONSE,
+        ):
             # Captured 00 a1 01 00: envelope success plus command result TLV A1.
+            # Some responses (like SET_SCENE) are just a single byte 00.
             if not payload:
                 raise ValueError("Effect response is missing status")
             status = payload[0]
-            if status == 0:
-                result = _parse_tlvs(payload[1:]).get(0xA1)
-                if result is None or len(result) != 1:
-                    raise ValueError("Effect response is missing its result")
-                status = result[0]
+            if status == 0 and len(payload) > 1:
+                tlvs = _parse_tlvs(payload[1:])
+                result = tlvs.get(0xA1)
+                if result is not None and len(result) == 1:
+                    status = result[0]
+            # result: 00 = Success, anything else = Failure
             self._loop.call_soon_threadsafe(self._complete_effect, serial, status)
             return
         if opcode in (_GET_SETTINGS_RESPONSE, _SET_POWER_RESPONSE):
@@ -761,7 +1012,16 @@ class EufyLifeLightCloud:
                 if light_id != device.light_id:
                     device.rgb_color = None
                     device.effect = None
+                    device.colors = []
                 device.light_id = light_id
+            cloud_id = values.get(0xA6)
+            if cloud_id and len(cloud_id) == 4:
+                cid = int.from_bytes(cloud_id, "little")
+                if cid:
+                    for eff_name, eff_p in device.effects.items():
+                        if eff_p.get("light_id") == cid:
+                            device.effect = eff_name
+                            break
             self._notify(serial)
             return
         if opcode == _SET_POWER_RESPONSE:
@@ -783,6 +1043,26 @@ class EufyLifeLightCloud:
             else:
                 future.set_result(None)
 
+    async def async_handshake(self, serial: str) -> None:
+        """Perform the iOS-style session handshake (Opcode 0200)."""
+        # A1: Timestamp, A2: UserID, A3: ff010000 (Session Mask)
+        value = _tlv(0xA3, bytes.fromhex("ff010000"))
+        payload = _command_payload(self._user_id, value)
+
+        async with self._effect_locks[serial]:
+            future = self._loop.create_future()
+            self._effect_replies[serial] = future
+            try:
+                _LOGGER.info("Performing Session Handshake for %s", serial)
+                # Handshake always uses Version 0
+                self._publish(serial, (0x02, 0x00), payload, version=0)
+                await asyncio.wait_for(future, timeout=_EFFECT_RESPONSE_TIMEOUT)
+                _LOGGER.info("Handshake Success for %s", serial)
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Handshake timed out for %s, continuing anyway", serial)
+            finally:
+                self._effect_replies.pop(serial, None)
+
     async def async_set_effect(
         self,
         serial: str,
@@ -794,30 +1074,59 @@ class EufyLifeLightCloud:
         direction: int | None = None,
         params: str | None = None,
         use_ai_opcode: bool = False,
+        refresh: bool = True,
     ) -> None:
         """Wait for the device result before remembering the selected palette."""
         device = self.devices[serial]
+
+        # For T8L40, ensure a handshake has occurred for this connection
+        if device.model == _T8L40_MODEL and effect is not None:
+            await self.async_handshake(serial)
+            await asyncio.sleep(0.5)
+
         if (rgb_color is not None or rgbww_color is not None) and effect is not None:
             raise EufyLifeCloudError("Choose either a color or a preset")
-        
+
         # Determine parameters
         target_speed = speed if speed is not None else 1
         target_direction = direction if direction is not None else 0
         target_cloud_id = None
+        light_id = None
         target_colors = None
         target_params = params
-        
+
+        protocol_version = 0
+        use_version_1 = False
         if effect is not None:
             if effect not in device.effects:
                 raise EufyLifeCloudError(f"Unsupported light preset: {effect}")
             p = device.effects[effect]
-            if "params" in p:
+            target_cloud_id = p.get("light_id")
+
+            if device.model == _T8L40_MODEL and (
+                target_cloud_id in _T8L40_VERIFIED_ANIMATION_LAYERS or "params" in p
+            ):
+                opcode = _SET_ANIMATION
+                value = _build_t8l40_animation_payload(
+                    target_cloud_id or 0, p.get("params"), speed
+                )
+                payload = _command_payload(self._user_id, value)
+            elif "dynamic" in p:
+                opcode = _SET_EFFECT
+                light_id = p["dynamic"]
+                target_colors = p["colors"]
+                if speed is None:
+                    target_speed = p["speed"]
+                if direction is None:
+                    target_direction = p["direction"]
+                value = _effect_payload(
+                    light_id, target_colors, target_direction, target_speed, target_cloud_id
+                )
+                payload = _command_payload(self._user_id, value)
+            elif "params" in p:
                 opcode = _SET_LIGHT_AI if use_ai_opcode else _SET_LIGHT_SHOW
                 light_id = 0
-                target_cloud_id = p["light_id"]
                 target_params = p["params"]
-                # New format uses tag A3 (ID) and A4 (JSON) with 2-byte length headers
-                # We also include standard tags A8-B0 for compatibility
                 value = (
                     _tlv_long(0xA3, target_cloud_id.to_bytes(2, "little"))
                     + _tlv_long(0xA4, target_params.encode())
@@ -827,30 +1136,25 @@ class EufyLifeLightCloud:
                     + _tlv(0xAE, b"\x00")
                     + _tlv(0xB0, b"\x00")
                 )
-            else:
-                opcode = _SET_EFFECT
-                light_id = p["dynamic"]
-                target_cloud_id = p["light_id"]
-                target_colors = p["colors"]
-                if speed is None:
-                    target_speed = p["speed"]
-                if direction is None:
-                    target_direction = p["direction"]
-                value = _effect_payload(
-                    light_id, target_colors, target_direction, target_speed, target_cloud_id
-                )
+                payload = _command_payload(self._user_id, value)
         elif target_params is not None:
             # Custom JSON animation
-            opcode = _SET_LIGHT_AI if use_ai_opcode else _SET_LIGHT_SHOW
-            light_id = 0
-            value = (
-                _tlv_long(0xA4, target_params.encode())
-                + _tlv(0xA8, b"\x64")
-                + _tlv(0xA9, bytes(5))
-                + _tlv(0xAA, b"\x00")
-                + _tlv(0xAE, b"\x00")
-                + _tlv(0xB0, b"\x00")
-            )
+            if device.model == _T8L40_MODEL:
+                opcode = _SET_ANIMATION
+                value = _build_t8l40_animation_payload(0, target_params, speed)
+                payload = _command_payload(self._user_id, value)
+            else:
+                opcode = _SET_LIGHT_AI if use_ai_opcode else _SET_LIGHT_SHOW
+                light_id = 0
+                value = (
+                    _tlv_long(0xA4, target_params.encode())
+                    + _tlv(0xA8, b"\x64")
+                    + _tlv(0xA9, bytes(5))
+                    + _tlv(0xAA, b"\x00")
+                    + _tlv(0xAE, b"\x00")
+                    + _tlv(0xB0, b"\x00")
+                )
+                payload = _command_payload(self._user_id, value)
         elif colors is not None:
             opcode = _SET_EFFECT
             if not device.lamp_count:
@@ -862,6 +1166,7 @@ class EufyLifeLightCloud:
             value = _effect_payload(
                 light_id, target_colors, target_direction, target_speed, None, 7
             )
+            payload = _command_payload(self._user_id, value)
         else:
             # Single color for all segments
             if rgb_color is None and rgbww_color is None:
@@ -876,15 +1181,16 @@ class EufyLifeLightCloud:
                 value = _effect_payload(
                     light_id, target_colors, target_direction, target_speed, None, 7
                 )
+                payload = _command_payload(self._user_id, value)
             except (TypeError, ValueError) as err:
                 raise EufyLifeCloudError("Invalid color or lamp count") from err
-        
+
         async with self._effect_locks[serial]:
             future = self._loop.create_future()
             self._effect_replies[serial] = future
             try:
                 self._publish(
-                    serial, opcode, _command_payload(self._user_id, value)
+                    serial, opcode, payload, version=1 if use_version_1 else 0
                 )
                 await asyncio.wait_for(future, timeout=_EFFECT_RESPONSE_TIMEOUT)
             except asyncio.TimeoutError as err:
@@ -893,7 +1199,7 @@ class EufyLifeLightCloud:
                 ) from err
             finally:
                 self._effect_replies.pop(serial, None)
-            
+
             # ponytail: ACK-backed selection, not palette readback
             device.light_id = light_id if light_id else target_cloud_id
             device.rgb_color = tuple(rgb_color) if rgb_color is not None else None
@@ -902,7 +1208,44 @@ class EufyLifeLightCloud:
             device.speed = target_speed
             device.direction = target_direction
             device.colors = target_colors
-            self.request_settings(serial)
+            if refresh:
+                self.request_settings(serial)
+            self._notify(serial)
+
+    async def async_set_scene(
+        self,
+        serial: str,
+        scene_id: int,
+        refresh: bool = True,
+    ) -> None:
+        """Set a specific cloud scene by ID (Opcode 0202)."""
+        device = self.devices[serial]
+
+        # For T8L40, ensure a handshake has occurred for this connection
+        if device.model == _T8L40_MODEL:
+            await self.async_handshake(serial)
+            await asyncio.sleep(0.5)
+
+        value = _tlv(0xA3, scene_id.to_bytes(4, "little"))
+        payload = _command_payload(self._user_id, value)
+
+        async with self._effect_locks[serial]:
+            future = self._loop.create_future()
+            self._effect_replies[serial] = future
+            try:
+                self._publish(
+                    serial, _SET_SCENE, payload
+                )
+                await asyncio.wait_for(future, timeout=_EFFECT_RESPONSE_TIMEOUT)
+            except asyncio.TimeoutError as err:
+                raise EufyLifeCloudError(
+                    "Light did not acknowledge the scene change"
+                ) from err
+            finally:
+                self._effect_replies.pop(serial, None)
+
+            if refresh:
+                self.request_settings(serial)
             self._notify(serial)
 
     def set_power(
@@ -920,27 +1263,31 @@ class EufyLifeLightCloud:
             _command_payload(self._user_id, value),
         )
 
-    def _publish(self, serial: str, opcode: tuple[int, int], payload: bytes) -> None:
+    def _publish(self, serial: str, opcode: tuple[int, int], payload: bytes, version: int = 0) -> None:
         if not self.connected or self._mqtt is None:
             raise EufyLifeCloudError("Eufy Life MQTT is not connected")
         device = self.devices[serial]
+
+        self._msg_seq = (self._msg_seq + 1) % 1000
+        timestamp = int(time.time())
+
         command = {
             "head": {
                 "version": "1.0.0.1",
-                "client_id": f"android-eufy_life-{self._user_id}-{self._openudid}",
+                "client_id": f"android-eufy_life-{self._user_id}",
                 "sess_id": "1",
-                "msg_seq": 0,
+                "msg_seq": self._msg_seq,
                 "cmd": 17,
                 "cmd_status": 1,
                 "sign_code": 0,
                 "seed": "",
-                "timestamp": int(time.time()),
+                "timestamp": timestamp,
             },
             "payload": json.dumps(
                 {
                     "account_id": device.account_id,
                     "device_sn": serial,
-                    "data": base64.b64encode(_frame(opcode, payload)).decode(),
+                    "data": base64.b64encode(_frame(opcode, payload, version)).decode(),
                 },
                 separators=(",", ":"),
             ),
@@ -1092,7 +1439,7 @@ def _self_check() -> None:
             from homeassistant.components.light import ColorMode
 
             light = EufyLifeLight(cloud, cloud.devices["shared"])
-            assert light.supported_color_modes == {ColorMode.RGB}
+            assert light.supported_color_modes == {ColorMode.RGBWW}
             cloud._handle_frame("shared", _GET_SETTINGS_RESPONSE, b"\x00\xa2\x01\x32")
             assert light.brightness == 128
             await light.async_turn_on(brightness=255)
@@ -1115,6 +1462,11 @@ def _self_check() -> None:
             assert values[0xA9] == bytes(5)
             assert values[0xB0] == b"\x07"
             assert 0xAC not in values
+            animation_payload = _build_t8l40_animation_payload(10854, "{}", 54)
+            assert animation_payload.startswith(
+                bytes.fromhex("a304662a0000a40136a50102a60103a80100a935")
+            )
+            assert tuple(_frame(_SET_ANIMATION, animation_payload, version=0)[7:9]) == _SET_ANIMATION
             preset = {
                 "name": "White",
                 "dynamic": "44",
@@ -1144,7 +1496,7 @@ def _self_check() -> None:
                 ]
             }
             effects = _parse_effects(catalog)
-            assert list(effects) == ["White"]
+            assert list(effects) == ["White", "New format"]
             assert effects["White"]["light_id"] == 30024
             device = cloud.devices["shared"]
             cloud._handle_frame(
@@ -1152,7 +1504,7 @@ def _self_check() -> None:
             )
             assert device.lamp_count == 4 and device.light_id == 20006
             device.effects = effects
-            assert light.effect_list == ["White"]
+            assert light.effect_list == ["White", "New format"]
             task = asyncio.create_task(light.async_turn_on(rgb_color=(255, 0, 0)))
             await asyncio.sleep(0)
             assert light.rgb_color is None

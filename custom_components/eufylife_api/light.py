@@ -61,6 +61,13 @@ async def async_setup_entry(
         },
         "async_set_light_show",
     )
+    platform.async_register_entity_service(
+        "set_scene",
+        {
+            vol.Required("scene_id"): vol.Coerce(int),
+        },
+        "async_set_scene",
+    )
 
 
 class EufyLifeLight(LightEntity):
@@ -103,12 +110,16 @@ class EufyLifeLight(LightEntity):
 
     @property
     def rgb_color(self) -> tuple[int, int, int] | None:
+        if self._device.effect is not None:
+            return None
         if self._device.colors and len(self._device.colors) > 0:
             return self._device.colors[0][:3]
         return self._device.rgb_color
 
     @property
     def rgbww_color(self) -> tuple[int, int, int, int, int] | None:
+        if self._device.effect is not None:
+            return None
         if self._device.colors and len(self._device.colors) > 0:
             color = self._device.colors[0]
             if len(color) == 5:
@@ -149,11 +160,16 @@ class EufyLifeLight(LightEntity):
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         if ATTR_RGB_COLOR in kwargs or ATTR_RGBWW_COLOR in kwargs or ATTR_EFFECT in kwargs:
             try:
+                refresh = True
+                if self._device.model == "T8L40":
+                    refresh = False
+
                 await self._cloud.async_set_effect(
                     self._device.serial,
                     rgb_color=kwargs.get(ATTR_RGB_COLOR),
                     rgbww_color=kwargs.get(ATTR_RGBWW_COLOR),
                     effect=kwargs.get(ATTR_EFFECT),
+                    refresh=refresh,
                 )
             except EufyLifeCloudError as err:
                 raise HomeAssistantError(str(err)) from err
@@ -177,12 +193,18 @@ class EufyLifeLight(LightEntity):
             target_colors = None
             if colors is not None:
                 target_colors = [tuple(c) for c in colors]
+
+            refresh = True
+            if self._device.model == "T8L40":
+                refresh = False
+
             await self._cloud.async_set_effect(
                 self._device.serial,
                 effect=effect,
                 colors=target_colors,
                 speed=speed,
                 direction=direction,
+                refresh=refresh,
             )
         except EufyLifeCloudError as err:
             raise HomeAssistantError(str(err)) from err
@@ -194,10 +216,28 @@ class EufyLifeLight(LightEntity):
     ) -> None:
         """Advanced control service: set a custom JSON LightShow animation."""
         try:
+            refresh = True
+            if self._device.model == "T8L40":
+                refresh = False
+
             await self._cloud.async_set_effect(
                 self._device.serial,
                 params=params,
                 use_ai_opcode=use_ai_opcode,
+                refresh=refresh,
+            )
+        except EufyLifeCloudError as err:
+            raise HomeAssistantError(str(err)) from err
+
+    async def async_set_scene(
+        self,
+        scene_id: int,
+    ) -> None:
+        """Advanced control service: set a specific cloud scene by ID."""
+        try:
+            await self._cloud.async_set_scene(
+                self._device.serial,
+                scene_id=scene_id,
             )
         except EufyLifeCloudError as err:
             raise HomeAssistantError(str(err)) from err
