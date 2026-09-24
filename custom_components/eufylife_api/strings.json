@@ -3,13 +3,15 @@
     "step": {
       "user": {
         "title": "EufyLife API",
-        "description": "Enter your EufyLife account credentials to connect your smart scale data.",
+        "description": "Enter your EufyLife account credentials to connect smart scales and E10 lights.",
         "data": {
           "email": "Email",
           "password": "Password",
+          "country": "Country Code",
           "update_interval": "Update Interval"
         },
         "data_description": {
+          "country": "2-letter country code (e.g. US, DE, GB) where your EufyLife account was created. This determines which regional API server is used.",
           "update_interval": "How often to check for new weight data"
         }
       },
@@ -18,7 +20,8 @@
         "description": "Your credentials need to be updated. Please re-enter your login information.",
         "data": {
           "email": "Email",
-          "password": "Password"
+          "password": "Password",
+          "country": "Country Code"
         }
       }
     },
@@ -38,9 +41,11 @@
         "title": "EufyLife API Options",
         "description": "Configure your EufyLife API integration options.",
         "data": {
+          "country": "Country Code",
           "update_interval": "Update Interval"
         },
         "data_description": {
+          "country": "2-letter country code (e.g. US, DE, GB) where your EufyLife account was created. This determines which regional API server is used.",
           "update_interval": "How often to check for new weight data"
         }
       }
@@ -79,6 +84,16 @@
       "bmi": {
         "name": "BMI"
       }
+    },
+    "number": {
+      "effect_speed": {
+        "name": "Effect Speed"
+      }
+    },
+    "select": {
+      "effect_direction": {
+        "name": "Effect Direction"
+      }
     }
   }
-} 
+}

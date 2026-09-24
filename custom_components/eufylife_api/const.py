@@ -6,15 +6,18 @@ DOMAIN = "eufylife_api"
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_UPDATE_INTERVAL = "update_interval"
+CONF_COUNTRY = "country"
 CONF_DATA_LOOKBACK_DAYS = "data_lookback_days"
 
 # API constants
 API_BASE_URL = "https://api.eufylife.com"
+AUTH_API_BASE_URL = "https://home-api.eufylife.com/v1"
+LIGHT_API_BASE_URL = "https://aiot-light-api-pr.eufylife.com"
 CLIENT_ID = "eufy-app"
 CLIENT_SECRET = "8FHf22gaTKu7MZXqz5zytw"
 
 # User-Agent version - update if EufyLife releases newer app versions
-USER_AGENT_VERSION = "3.3.7"
+USER_AGENT_VERSION = "3.3.12"
 
 # Default update interval in seconds (5 minutes)
 DEFAULT_UPDATE_INTERVAL = 300
@@ -46,7 +49,7 @@ SENSOR_TYPES = {
     },
     "target_weight": {
         "name": "Target Weight",
-        "device_class": "weight", 
+        "device_class": "weight",
         "unit": "kg",
         "icon": "mdi:target",
     },
@@ -58,7 +61,7 @@ SENSOR_TYPES = {
     "muscle_mass": {
         "name": "Muscle Mass",
         "device_class": "weight",
-        "unit": "kg", 
+        "unit": "kg",
         "icon": "mdi:arm-flex",
     },
     "bmi": {
@@ -97,4 +100,4 @@ SENSOR_TYPES = {
         "unit": "%",
         "icon": "mdi:food-drumstick",
     },
-} 
+}

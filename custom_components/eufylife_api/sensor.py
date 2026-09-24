@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
@@ -28,9 +27,7 @@ from homeassistant.helpers.update_coordinator import (
 
 from .const import (
     API_BASE_URL,
-    CONF_DATA_LOOKBACK_DAYS,
     CONF_UPDATE_INTERVAL,
-    DEFAULT_DATA_LOOKBACK_DAYS,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     SENSOR_TYPES,
@@ -55,7 +52,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_device_timestamp = None  # Track last measurement timestamp
 
         # Get update interval from config, fallback to default
-        update_interval_seconds = entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        update_interval_seconds = entry.data.get(
+            CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
+        )
 
         super().__init__(
             hass,
@@ -181,7 +180,8 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         device_data = await self._fetch_device_data()
         if device_data:
             _LOGGER.info(
-                "Device data endpoint returned %d records, processing...", len(device_data)
+                "Device data endpoint returned %d records, processing...",
+                len(device_data),
             )
             processed_device_data = await self._process_device_data(device_data)
 
@@ -203,7 +203,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         else:
             # No new data available — preserve existing data to avoid "unknown" sensor state
             if self.data:
-                _LOGGER.info("No new device data available - preserving existing sensor data")
+                _LOGGER.info(
+                    "No new device data available - preserving existing sensor data"
+                )
                 return self.data
             else:
                 _LOGGER.warning(
@@ -227,7 +229,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
         else:
             since_timestamp = None
             use_after_param = False
-            _LOGGER.info("First run - fetching ALL historical device data (no timestamp filter)")
+            _LOGGER.info(
+                "First run - fetching ALL historical device data (no timestamp filter)"
+            )
 
         headers = {
             "Host": "api.eufylife.com",
@@ -295,7 +299,8 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
 
                     if actual_data and len(actual_data) > 0:
                         _LOGGER.info(
-                            "Retrieved %d device data records for processing", len(actual_data)
+                            "Retrieved %d device data records for processing",
+                            len(actual_data),
                         )
 
                         customer_ids_found = set()
@@ -386,7 +391,10 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                         timestamp = datetime.fromtimestamp(update_time)
                         if latest_timestamp is None or update_time > latest_timestamp:
                             latest_timestamp = update_time
-                        if earliest_timestamp is None or update_time < earliest_timestamp:
+                        if (
+                            earliest_timestamp is None
+                            or update_time < earliest_timestamp
+                        ):
                             earliest_timestamp = update_time
                     except Exception as ts_err:
                         _LOGGER.debug(
@@ -418,7 +426,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
 
                 water_percentage = scale_data.get("water")
                 if water_percentage and isinstance(water_percentage, (int, float)):
-                    customer_data["water_percentage"] = round(float(water_percentage), 2)
+                    customer_data["water_percentage"] = round(
+                        float(water_percentage), 2
+                    )
                     customer_data["device_water_percentage"] = True
 
                 bone_mass = scale_data.get("bone_mass")
@@ -462,7 +472,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                     for key in ["weight", "body_fat", "muscle_mass", "bmi"]
                 ):
                     if customer_id in processed_data:
-                        existing_timestamp = processed_data[customer_id].get("last_update")
+                        existing_timestamp = processed_data[customer_id].get(
+                            "last_update"
+                        )
                         if (
                             timestamp
                             and existing_timestamp
@@ -491,7 +503,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
                         customer_data.get("body_fat"),
                         customer_data.get("muscle_mass"),
                         customer_data.get("bmi"),
-                        timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "None",
+                        timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                        if timestamp
+                        else "None",
                     )
                 else:
                     _LOGGER.debug(
@@ -515,13 +529,19 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
             if earliest_timestamp != latest_timestamp:
                 _LOGGER.info(
                     "Historical data range: %s to %s",
-                    datetime.fromtimestamp(earliest_timestamp).strftime("%Y-%m-%d %H:%M:%S"),
-                    datetime.fromtimestamp(latest_timestamp).strftime("%Y-%m-%d %H:%M:%S"),
+                    datetime.fromtimestamp(earliest_timestamp).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    ),
+                    datetime.fromtimestamp(latest_timestamp).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    ),
                 )
             else:
                 _LOGGER.info(
                     "Single historical measurement at: %s",
-                    datetime.fromtimestamp(latest_timestamp).strftime("%Y-%m-%d %H:%M:%S"),
+                    datetime.fromtimestamp(latest_timestamp).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    ),
                 )
 
         _LOGGER.info(
@@ -539,7 +559,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
 
     def update_interval_from_config(self) -> None:
         """Update the coordinator's update interval from config entry."""
-        new_interval_seconds = self.entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        new_interval_seconds = self.entry.data.get(
+            CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
+        )
         new_interval = timedelta(seconds=new_interval_seconds)
 
         if new_interval != self.update_interval:
@@ -558,7 +580,9 @@ class EufyLifeDataUpdateCoordinator(DataUpdateCoordinator):
     def reset_device_timestamp(self) -> None:
         """Reset the device timestamp to force full data reload on next update."""
         self._last_device_timestamp = None
-        _LOGGER.info("Device timestamp reset - next update will use full lookback period")
+        _LOGGER.info(
+            "Device timestamp reset - next update will use full lookback period"
+        )
 
 
 async def async_setup_entry(
@@ -568,6 +592,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up EufyLife API sensor based on a config entry."""
     _LOGGER.info("Setting up EufyLife API sensors for entry %s", entry.entry_id)
+
+    if not entry.runtime_data.customer_ids:
+        _LOGGER.info("No EufyLife scale customers found; skipping scale polling")
+        return
 
     coordinator = EufyLifeDataUpdateCoordinator(hass, entry)
 
@@ -667,13 +695,17 @@ class EufyLifeSensorEntity(CoordinatorEntity, SensorEntity):
 
         if (
             self.sensor_type
-            in ["weight", "target_weight", "muscle_mass", "bone_mass"]
-            and value
-        ):
-            return round(float(value), 2)
-        elif (
-            self.sensor_type
-            in ["body_fat", "water_percentage", "visceral_fat", "protein_ratio", "bmi"]
+            in [
+                "weight",
+                "target_weight",
+                "muscle_mass",
+                "bone_mass",
+                "body_fat",
+                "water_percentage",
+                "visceral_fat",
+                "protein_ratio",
+                "bmi",
+            ]
             and value
         ):
             return round(float(value), 2)
@@ -699,7 +731,9 @@ class EufyLifeSensorEntity(CoordinatorEntity, SensorEntity):
 
         attrs["customer_id"] = self.customer_id[:8]
 
-        interval_seconds = self.entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        interval_seconds = self.entry.data.get(
+            CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
+        )
         attrs["update_interval"] = f"{interval_seconds} seconds"
 
         if hasattr(self.coordinator, "_update_count"):

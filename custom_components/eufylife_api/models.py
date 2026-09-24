@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
-    from homeassistant.loader import Integration
+
+    from .cloud import EufyLifeLightCloud
 
 
 @dataclass
@@ -20,6 +21,10 @@ class EufyLifeData:
     device_id: str | None
     customer_ids: list[str]
     expires_at: float
+    user_center_id: str | None
+    user_center_token: str | None
+    openudid: str
+    light_cloud: EufyLifeLightCloud | None = None
 
 
-type EufyLifeConfigEntry = ConfigEntry[EufyLifeData] 
+EufyLifeConfigEntry = "ConfigEntry[EufyLifeData]"

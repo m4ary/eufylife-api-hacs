@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 
 import aiohttp
 
@@ -15,10 +16,14 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import voluptuous as vol
 
+from .cloud import (
+    EufyLifeAuthError,
+    EufyLifeCloudError,
+    EufyLifeLightCloud,
+    async_login,
+)
 from .const import (
-    API_BASE_URL,
-    CLIENT_ID,
-    CLIENT_SECRET,
+    CONF_COUNTRY,
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
@@ -27,7 +32,7 @@ from .models import EufyLifeData
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.LIGHT, Platform.NUMBER, Platform.SELECT]
 
 
 async def async_refresh_token(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -38,64 +43,29 @@ async def async_refresh_token(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
     session = async_get_clientsession(hass)
 
-    headers = {
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "User-Agent": "EufyLife-iOS-3.3.7",
-        "Category": "Health",
-        "Language": "en",
-        "Timezone": "UTC",
-        "Country": "US",
-        "Content-Type": "application/json",
-    }
-
-    login_data = {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "email": entry.data[CONF_EMAIL],
-        "password": entry.data[CONF_PASSWORD],
-    }
-
     try:
-        async with session.post(
-            f"{API_BASE_URL}/v1/user/v2/email/login",
-            headers=headers,
-            json=login_data,
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as response:
-            if response.status == 200:
-                data = await response.json()
-                if data.get("res_code") == 1:
-                    expires_in = data.get("expires_in", 2592000)  # 30 days default
-                    new_token = data["access_token"]
-
-                    hass.config_entries.async_update_entry(
-                        entry,
-                        data={
-                            **entry.data,
-                            "access_token": new_token,
-                            "expires_at": time.time() + expires_in,
-                        },
-                    )
-
-                    _LOGGER.info(
-                        "Token silently refreshed, valid for %.1f days",
-                        expires_in / 86400,
-                    )
-                    return True
-
-                _LOGGER.warning(
-                    "Silent token refresh rejected by API: res_code=%s, message=%s",
-                    data.get("res_code"),
-                    data.get("message", "Unknown error"),
-                )
-            else:
-                _LOGGER.warning(
-                    "Silent token refresh failed: HTTP %d", response.status
-                )
-
-    except aiohttp.ClientError as err:
+        auth_data = await async_login(
+            session,
+            entry.data[CONF_EMAIL],
+            entry.data[CONF_PASSWORD],
+            entry.data.get(CONF_COUNTRY, hass.config.country or "US"),
+        )
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                **entry.data,
+                "access_token": auth_data["access_token"],
+                "user_id": auth_data["user_id"],
+                "user_center_id": auth_data.get("user_center_id"),
+                "user_center_token": auth_data.get("user_center_token"),
+                "expires_at": auth_data["expires_at"],
+            },
+        )
+        _LOGGER.info("Eufy Life token silently refreshed")
+        return True
+    except EufyLifeAuthError as err:
+        _LOGGER.warning("Silent token refresh rejected by API: %s", err)
+    except (aiohttp.ClientError, TimeoutError) as err:
         _LOGGER.error("Network error during silent token refresh: %s", err)
     except Exception as err:  # pylint: disable=broad-except
         _LOGGER.error("Unexpected error during silent token refresh: %s", err)
@@ -117,9 +87,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         time_until_expiry / 60,
     )
 
-    if time_until_expiry <= 300:  # 5 minute buffer
+    missing_light_tokens = not all(
+        isinstance(entry.data.get(key), str) and entry.data[key]
+        for key in ("user_center_id", "user_center_token")
+    )
+    if time_until_expiry <= 300 or missing_light_tokens:  # Existing project buffer.
         _LOGGER.warning(
-            "Token expired or expiring soon (%.1f min), attempting silent refresh...",
+            "Account tokens need refresh (expiry in %.1f min), re-authenticating...",
             time_until_expiry / 60,
         )
         refreshed = await async_refresh_token(hass, entry)
@@ -135,6 +109,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         _LOGGER.info("Token is valid for %.1f more minutes", time_until_expiry / 60)
 
+    openudid = entry.data.get("openudid")
+    if not isinstance(openudid, str) or not openudid:
+        openudid = str(uuid.uuid4())
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "openudid": openudid}
+        )
+
     # Create runtime data (use potentially-refreshed token from entry.data)
     customer_ids = entry.data.get("customer_ids", [])
     entry.runtime_data = EufyLifeData(
@@ -144,7 +125,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         device_id=entry.data.get("device_id"),
         customer_ids=customer_ids,
         expires_at=entry.data.get("expires_at", 0),
+        user_center_id=entry.data.get("user_center_id"),
+        user_center_token=entry.data.get("user_center_token"),
+        openudid=openudid,
     )
+
+    center_id = entry.runtime_data.user_center_id
+    center_token = entry.runtime_data.user_center_token
+    if isinstance(center_id, str) and isinstance(center_token, str):
+        light_cloud = EufyLifeLightCloud(
+            async_get_clientsession(hass),
+            entry.runtime_data.user_id,
+            center_id,
+            center_token,
+            openudid,
+            entry.data.get(CONF_COUNTRY, hass.config.country or "US"),
+            hass.config.language or "en",
+            hass.config.time_zone,
+        )
+        try:
+            await light_cloud.async_start()
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            EufyLifeCloudError,
+            OSError,
+            ValueError,
+        ) as err:
+            await light_cloud.async_close()
+            raise ConfigEntryNotReady(f"Eufy light cloud setup failed: {err}") from err
+        entry.runtime_data.light_cloud = light_cloud
 
     update_interval = entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
     _LOGGER.info(
@@ -183,6 +193,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("Unloading EufyLife API integration (entry_id: %s)", entry.entry_id)
     success = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if success:
+        if entry.runtime_data.light_cloud is not None:
+            await entry.runtime_data.light_cloud.async_close()
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         _LOGGER.info("EufyLife API integration unloaded successfully")
     else:
@@ -193,7 +205,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
     _LOGGER.info(
-        "EufyLife integration options updated for entry %s, reloading...", entry.entry_id
+        "EufyLife integration options updated for entry %s, reloading...",
+        entry.entry_id,
     )
     await hass.config_entries.async_reload(entry.entry_id)
     _LOGGER.info("EufyLife integration reload completed")
