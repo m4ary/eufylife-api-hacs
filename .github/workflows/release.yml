@@ -38,29 +38,14 @@ jobs:
             echo "::notice::Tag v${{ steps.version.outputs.version }} does not exist - proceeding with release"
           fi
 
-      - name: Update manifest.json version
-        if: steps.tag_check.outputs.exists == 'false'
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" custom_components/eufylife_api/manifest.json
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add custom_components/eufylife_api/manifest.json
-          git commit -m "Update manifest.json version to $VERSION" || exit 0
-
-      - name: Push changes
-        if: steps.tag_check.outputs.exists == 'false'
-        uses: ad-m/github-push-action@master
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: main
-
       - name: Generate changelog
         if: steps.tag_check.outputs.exists == 'false'
         id: changelog
         run: |
-          # Get the latest tag
-          LATEST_TAG=$(git tag --sort=-version:refname | head -n 1)
+          # Get the latest stable tag. Pre-release tags sort above their own
+          # stable tag (v2.3.0-beta1 > v2.3.0), so including them would cut the
+          # changelog off at the beta and drop everything released with it.
+          LATEST_TAG=$(git tag --sort=-version:refname | grep -vE '\-(alpha|beta|rc)' | head -n 1)
           
           # If no previous tag exists, use initial commit
           if [ -z "$LATEST_TAG" ]; then
@@ -107,4 +92,4 @@ jobs:
             2. Extract the files to your `custom_components/eufylife_api/` directory
             3. Restart Home Assistant
           draft: false
-          prerelease: false 
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }} 

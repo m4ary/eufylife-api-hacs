@@ -24,10 +24,12 @@ from .cloud import EufyLifeAuthError, async_login
 from .const import (
     CONF_COUNTRY,
     CONF_UPDATE_INTERVAL,
+    DEFAULT_COUNTRY,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     UPDATE_INTERVAL_OPTIONS,
 )
+from .models import entry_country
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,6 +78,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_PASSWORD: password,
                             CONF_COUNTRY: country,
                             CONF_UPDATE_INTERVAL: update_interval,
+                            "country": country,
                             "user_id": auth_data["user_id"],
                             "access_token": auth_data["access_token"],
                             "user_center_id": auth_data.get("user_center_id"),
@@ -111,7 +114,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Required(
                         CONF_COUNTRY,
                         default=(user_input or {}).get(
-                            CONF_COUNTRY, self.hass.config.country or "US"
+                            CONF_COUNTRY, self.hass.config.country or DEFAULT_COUNTRY
                         ),
                     ): TextSelector(),
                     vol.Optional(
@@ -147,9 +150,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
                         vol.Required(CONF_PASSWORD): str,
                         vol.Required(
                             CONF_COUNTRY,
-                            default=self._reauth_entry.data.get(
-                                CONF_COUNTRY, self.hass.config.country or "US"
-                            ),
+                            default=entry_country(self._reauth_entry.data),
                         ): TextSelector(),
                     }
                 ),
@@ -234,12 +235,7 @@ class EufyLifeAPIConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> dict[str, Any] | None:
         """Test if we can authenticate with the given credentials."""
         session = async_get_clientsession(self.hass)
-        return await async_login(
-            session,
-            email,
-            password,
-            country,
-        )
+        return await async_login(session, email, password, country)
 
 
 class EufyLifeAPIOptionsFlow(OptionsFlow):
@@ -291,9 +287,7 @@ class EufyLifeAPIOptionsFlow(OptionsFlow):
                     ),
                     vol.Required(
                         CONF_COUNTRY,
-                        default=self.config_entry.data.get(
-                            CONF_COUNTRY, self.hass.config.country or "US"
-                        ),
+                        default=entry_country(self.config_entry.data),
                     ): TextSelector(),
                 }
             ),
