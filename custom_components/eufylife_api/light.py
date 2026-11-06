@@ -76,6 +76,8 @@ class EufyLifeLight(LightEntity):
     _attr_has_entity_name = True
     _attr_color_mode = ColorMode.RGBWW
     _attr_supported_color_modes = {ColorMode.RGBWW}
+    _attr_min_color_temp_kelvin = 1500
+    _attr_max_color_temp_kelvin = 9000
     _attr_supported_features = LightEntityFeature.EFFECT
     # Power/brightness are reported; color/effect are last device-acknowledged values.
     _attr_assumed_state = True
@@ -255,6 +257,8 @@ class EufyLifeSegmentLight(LightEntity):
     _attr_has_entity_name = True
     _attr_color_mode = ColorMode.RGBWW
     _attr_supported_color_modes = {ColorMode.RGBWW}
+    _attr_min_color_temp_kelvin = 1500
+    _attr_max_color_temp_kelvin = 9000
     # Segments don't have their own power/brightness in Eufy API, but we simulate it.
     _attr_assumed_state = True
 
