@@ -104,7 +104,7 @@ troubleshooting skipped presets.
 ### E10 light controls
 
 Open the light's more-info panel for brightness, the native RGBWW picker (supporting
-R, G, B, Warm White, and Cold White LEDs) and the effect selector. Classic presets
+R, G, B, Cold White, and Warm White LEDs) and the effect selector. Classic presets
 are discovered from the account's Eufy catalog; the tested E10 exposes White, Warm
 White, Cool White, Welcome1, Alarm1 and Alexa1. Existing `light.turn_on`/`light.turn_off`
 automations keep working.
@@ -139,14 +139,14 @@ data:
     - [255, 0, 0]      # Segment 1: Red
     - [0, 255, 0]      # Segment 2: Green
     - [0, 0, 255]      # Segment 3: Blue
-    - [255, 255, 0, 255, 0] # Segment 4: Yellow + Warm White
+    - [255, 255, 0, 0, 255] # Segment 4: Yellow + Warm White
   speed: 5             # 1 (slow) to 10 (fast)
   direction: 1         # 0 or 1
 ```
 
 The `colors` list must have exactly as many entries as there are segments in your
 light (check the `lamp_count` attribute of the entity). Each entry can be a
-3-tuple `[R, G, B]` or a 5-tuple `[R, G, B, W, C]`.
+3-tuple `[R, G, B]` or a 5-tuple `[R, G, B, CW, WW]`.
 
 ## Sensors
 

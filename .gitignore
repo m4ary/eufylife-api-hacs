@@ -127,4 +127,7 @@ OZW_Log.txt
 known_devices.yaml
 secrets.yaml
 /config
-.google.token 
+.google.token
+
+# Local development credentials & environment
+scripts/set_env.sh

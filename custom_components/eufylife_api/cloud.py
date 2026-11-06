@@ -350,10 +350,14 @@ def _effect_payload(
         indices = b"".join(bytes([len(slots), *slots]) for slots in grouped.values())
         colors = list(grouped)
     # palette: direct RGBWC entries; port model/firmware calibration for app-identical whites.
+    # Home Assistant passes RGBWW (R, G, B, CW, WW); convert 5-channel tuples to native RGBWC (R, G, B, WW, CW).
     palette_data = []
     for color in colors:
         if len(color) == 3:
             palette_data.extend((*color, 0, 0))
+        elif len(color) == 5:
+            r, g, b, cw, ww = color
+            palette_data.extend((r, g, b, ww, cw))
         else:
             palette_data.extend(color)
     palette = bytes([len(colors)]) + bytes(palette_data)
@@ -1479,6 +1483,8 @@ def _self_check() -> None:
 
             light = EufyLifeLight(cloud, cloud.devices["shared"])
             assert light.supported_color_modes == {ColorMode.RGBWW}
+            assert light.min_color_temp_kelvin == 1500
+            assert light.max_color_temp_kelvin == 9000
             cloud._handle_frame("shared", _GET_SETTINGS_RESPONSE, b"\x00\xa2\x01\x32")
             assert light.brightness == 128
             await light.async_turn_on(brightness=255)
@@ -1501,6 +1507,14 @@ def _self_check() -> None:
             assert values[0xA9] == bytes(5)
             assert values[0xB0] == b"\x07"
             assert 0xAC not in values
+
+            # Verify RGBWW (R, G, B, CW, WW) to native RGBWC (R, G, B, WW, CW) channel swapping:
+            # Cold white in HA: (0, 0, 0, 255, 0) -> Lamp RGBWC: (0, 0, 0, 0, 255)
+            cw_values = _parse_tlvs(_effect_payload(20006, [(0, 0, 0, 255, 0)], 0, 1, None, 7))
+            assert cw_values[0xA6] == bytes.fromhex("0100000000ff")
+            # Warm white in HA: (0, 0, 0, 0, 255) -> Lamp RGBWC: (0, 0, 0, 255, 0)
+            ww_values = _parse_tlvs(_effect_payload(20006, [(0, 0, 0, 0, 255)], 0, 1, None, 7))
+            assert ww_values[0xA6] == bytes.fromhex("01000000ff00")
             animation_payload = _build_t8l40_animation_payload(10854, "{}", 54)
             assert animation_payload.startswith(
                 bytes.fromhex("a304662a0000a40136a50102a60103a80100a935")
@@ -1550,6 +1564,17 @@ def _self_check() -> None:
             cloud._handle_frame("shared", (10, 6), bytes.fromhex("00a10100"))
             await task
             assert light.rgb_color == (255, 0, 0)
+            task = asyncio.create_task(light.async_turn_on(rgbww_color=(0, 0, 0, 255, 0)))
+            await asyncio.sleep(0)
+            sent = json.loads(cloud._mqtt.publish.call_args.args[1])
+            _, body = _parse_frame(
+                base64.b64decode(json.loads(sent["payload"])["data"])
+            )
+            # Cold white in HA (cw=255, ww=0) sent as native RGBWC (0, 0, 0, 0, 255)
+            assert _parse_tlvs(body)[0xA6] == bytes.fromhex("0100000000ff")
+            cloud._handle_frame("shared", (10, 6), bytes.fromhex("00a10100"))
+            await task
+            assert light.rgbww_color == (0, 0, 0, 255, 0)
             task = asyncio.create_task(light.async_turn_on(effect="White"))
             await asyncio.sleep(0)
             cloud._handle_frame("shared", (10, 6), bytes.fromhex("00a10101"))
@@ -1561,7 +1586,7 @@ def _self_check() -> None:
                 pass
             else:
                 raise AssertionError("Rejected preset was accepted")
-            assert light.effect is None and light.rgb_color == (255, 0, 0)
+            assert light.effect is None and light.rgbww_color == (0, 0, 0, 255, 0)
             task = asyncio.create_task(light.async_turn_on(effect="White"))
             await asyncio.sleep(0)
             sent = json.loads(cloud._mqtt.publish.call_args.args[1])
